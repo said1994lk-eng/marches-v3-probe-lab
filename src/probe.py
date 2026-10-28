@@ -236,7 +236,8 @@ async def gate4(context, samples):
             raise ValueError("DETAIL_PAGE_HTTP_ERROR")
         captcha = await page.locator('iframe[src*="recaptcha"],iframe[src*="hcaptcha"],.g-recaptcha,.h-captcha,input[name*="captcha"],img[src*="captcha"]').count()
         fields = await page.locator('input,select,textarea').evaluate_all("""els => els.slice(0,60).map(e=>({tag:e.tagName,type:e.type||'',name:String(e.name||'').slice(0,60)}))""")
-        r["form_field_types"] = [{"tag":e["tag"],"type":e["type"]} for e in fields]
+        r["form_field_count"] = len(fields)
+        r["form_control_types"] = sorted(set(e["type"] for e in fields))
         r["captcha_markup_detected"] = captcha > 0
         actions = page.get_by_role("link",name=re.compile("DCE|dossier de consultation|Télécharger",re.I))
         r["potential_document_actions"] = min(await actions.count(),20)
@@ -267,7 +268,7 @@ async def main():
             RESULT["gate1"] = {"status":"FAILED","reason":"Browser failed before connection"}
     finally:
         RESULT["finished_at"] = datetime.now(timezone.utc).isoformat()
-        (ART/"probe-report.json").write_text(json.dumps(RESULT,indent=2,ensure_ascii=False)+"\\n",encoding="utf-8")
+        (ART/"probe-report.json").write_text(json.dumps(RESULT,indent=2,ensure_ascii=False)+"\n",encoding="utf-8")
         print("BEGIN_PROBE_REPORT_JSON")
         print(json.dumps(RESULT,indent=2,ensure_ascii=False))
         print("END_PROBE_REPORT_JSON")
