@@ -3,6 +3,7 @@ on:
   push:
     paths:
       - ".github/workflows/10-portal-probe.yml"
+      - "src/probe.py"
   workflow_dispatch:
 permissions:
   contents: read
