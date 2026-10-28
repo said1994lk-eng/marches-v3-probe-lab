@@ -123,8 +123,31 @@ async def gate1(page):
         if response is None or response.status >= 400:
             raise ValueError("PORTAL_HTTP_ERROR")
         r["stage"] = "open_search"
-        await page.locator("#Annoces").click(timeout=15000)
-        await page.get_by_role("link", name=re.compile("Consultations en cours", re.I)).click(timeout=15000)
+        # Prefer the visible official navigation label; old PRADO deployments used #Annoces.
+        # A stable public AdvancedSearch route is a fallback, not proof that search worked.
+        opened = False
+        for menu in [
+            page.get_by_text(re.compile("CONSULTATIONS ET ANNONCES", re.I)).first,
+            page.locator("#Annoces"),
+        ]:
+            try:
+                if await menu.count() and await menu.is_visible():
+                    await menu.click(timeout=6000)
+                    opened = True
+                    break
+            except Exception:
+                continue
+        r["menu_opened"] = opened
+        consult = page.get_by_role("link", name=re.compile("Consultations en cours", re.I))
+        if await consult.count() and await consult.first.is_visible():
+            await consult.first.click(timeout=12000)
+            r["navigation_mode"] = "menu"
+        else:
+            # URL observed in earlier public portal trials. Use only the official HTTPS host.
+            fallback = "https://www.marchespublics.gov.ma/index.php?page=entreprise.EntrepriseAdvancedSearch&AllCons&EnCours&searchAnnCons"
+            response2 = await page.goto(fallback, wait_until="domcontentloaded", timeout=45000)
+            r["navigation_mode"] = "official_search_url"
+            r["search_http_status"] = response2.status if response2 else None
         r["stage"] = "search_fournitures"
         await page.locator("#ctl0_CONTENU_PAGE_AdvancedSearch_categorie").select_option(label="Fournitures", timeout=15000)
         await page.locator("#ctl0_CONTENU_PAGE_AdvancedSearch_lancerRecherche").click(timeout=15000)
@@ -187,6 +210,14 @@ async def gate1(page):
         return samples
     except Exception as exc:
         r.update(status="FAILED",error_type=err_type(exc),reason="Live source access, parsing or pagination failed; not zero results")
+        try:
+            r["observed_navigation"] = await page.evaluate("""() => ({
+              title: document.title.slice(0,100),
+              menuLabels:[...document.querySelectorAll('a,button')].map(e=>(e.innerText||'').trim()).filter(x=>/consult|annonce|recherche/i.test(x)).slice(0,12),
+              hasCategorySelector:!!document.querySelector('#ctl0_CONTENU_PAGE_AdvancedSearch_categorie')
+            })""")
+        except Exception:
+            pass
         await screenshot(page,"gate1-failure.png")
         return []
 
