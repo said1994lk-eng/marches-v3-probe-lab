@@ -1,0 +1,19 @@
+name: "00 — Public runner smoke"
+on:
+  push:
+    paths:
+      - ".github/workflows/00-runner-smoke.yml"
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  smoke:
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    steps:
+      - name: Confirm runner execution
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo "RUNNER_STARTED"
+          echo "SMOKE_OK"
