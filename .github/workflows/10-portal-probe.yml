@@ -1,0 +1,43 @@
+name: "10 — Official portal Gate 1 + Gate 4 (public read-only)"
+on:
+  push:
+    paths:
+      - ".github/workflows/10-portal-probe.yml"
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: public-marches-gates-probe
+  cancel-in-progress: false
+jobs:
+  live-probe:
+    runs-on: ubuntu-latest
+    timeout-minutes: 18
+    steps:
+      - name: Checkout (no persistent credentials)
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install Playwright and browser
+        run: |
+          python -m pip install -r requirements.txt
+          python -m playwright install --with-deps chromium
+      - name: Test public official AO listings and DCE access screen
+        env:
+          PYTHONUNBUFFERED: '1'
+        run: python src/probe.py
+      - name: Always upload sanitized JSON and public failure screenshot
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: public-marches-probe-report
+          path: |
+            artifacts/probe-report.json
+            artifacts/gate1-failure.png
+            artifacts/gate4-failure.png
+          if-no-files-found: warn
+          retention-days: 2
