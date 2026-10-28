@@ -1,0 +1,40 @@
+name: "20 — Fournitures Full Coverage Read-only"
+on:
+  push:
+    paths:
+      - ".github/workflows/20-fournitures-full-coverage.yml"
+      - "src/full_coverage.py"
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: public-marches-fournitures-full
+  cancel-in-progress: false
+jobs:
+  full-coverage:
+    runs-on: ubuntu-latest
+    timeout-minutes: 14
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install browser
+        run: |
+          python -m pip install -r requirements.txt
+          python -m playwright install --with-deps chromium
+      - name: Run bounded read-only category sweep
+        env:
+          MAX_PAGES: '20'
+          PYTHONUNBUFFERED: '1'
+        run: python src/full_coverage.py
+      - name: Keep summary even on failures (public: no personal data)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: official-fournitures-coverage-json
+          path: artifacts/full-coverage-report.json
+          retention-days: 2
+          if-no-files-found: warn
