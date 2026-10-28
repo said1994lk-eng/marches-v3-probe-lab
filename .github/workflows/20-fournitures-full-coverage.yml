@@ -30,7 +30,7 @@ jobs:
           MAX_PAGES: '20'
           PYTHONUNBUFFERED: '1'
         run: python src/full_coverage.py
-      - name: Keep summary even on failures (public: no personal data)
+      - name: "Keep summary even on failures (public: no personal data)"
         if: always()
         uses: actions/upload-artifact@v4
         with:
