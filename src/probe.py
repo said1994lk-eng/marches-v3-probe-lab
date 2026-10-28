@@ -154,10 +154,10 @@ async def gate1(page):
         r["stage"] = "result_count"
         await page.get_by_text(re.compile("Nombre de résultats", re.I)).first.wait_for(state="visible", timeout=25000)
         text = await page.locator("body").inner_text()
-        m = re.search(r"Nombre de résultats\\s*:\\s*([0-9 \\u00a0]+)", text, re.I)
+        m = re.search(r"Nombre de résultats\s*:\s*([0-9 \u00a0]+)", text, re.I)
         if not m:
             raise ValueError("OFFICIAL_COUNT_UNREADABLE")
-        r["official_total"] = int(re.sub(r"\\D", "", m.group(1)))
+        r["official_total"] = int(re.sub(r"\D", "", m.group(1)))
         if r["official_total"] == 0:
             r.update(status="PASS", full_coverage_verified=True, reason="Official source explicitly shows zero results")
             return []
