@@ -140,8 +140,9 @@ async def browser_probe():
                     if attempt == 2:
                         raise ValueError("BROWSER_NAV_TIMEOUT")
                 await page.wait_for_timeout(1000)
+            REPORT["stage"] = "await_search_form"
             category = page.locator("#ctl0_CONTENU_PAGE_AdvancedSearch_categorie")
-            await category.wait_for(state="attached", timeout=22000)
+            await category.wait_for(state="attached", timeout=20000)
             REPORT["stage"] = "filter"
             fa["unfiltered_total_seen"] = await soft_count(page)
             await category.select_option(label="Fournitures", timeout=12000)
@@ -240,16 +241,34 @@ async def browser_probe():
             REPORT["system_state"] = "VERIFIED_COMPLETE" if co["verified_complete"] else "PARTIAL_COVERAGE"
             REPORT["stage"] = "complete"
         finally:
+            # Compact public DOM evidence, no form values, cookies, URLs or secrets.
+            try:
+                health["dom_diagnostics"] = await asyncio.wait_for(page.evaluate("""() => ({
+                  title: (document.title || '').slice(0,100),
+                  pathname: location.pathname.slice(0,90),
+                  has_search_keyword: /recherche avancée/i.test(document.body?.innerText || ''),
+                  has_results_keyword: /nombre de résultats/i.test(document.body?.innerText || ''),
+                  category_control_found: !!document.querySelector('#ctl0_CONTENU_PAGE_AdvancedSearch_categorie'),
+                  total_select_controls: document.querySelectorAll('select').length,
+                  total_forms: document.querySelectorAll('form').length,
+                  document_ready_state: document.readyState
+                })"""), timeout=4)
+            except Exception:
+                health["dom_diagnostics"] = {"status":"UNAVAILABLE"}
             health["browser_duration_ms"] = round((time.monotonic()-started)*1000)
             await browser.close()
 
 async def main():
     try:
         REPORT["stage"] = "preflight"
-        if not preflight():
+        preflight_passed = preflight()
+        if not preflight_passed and REPORT["preflight_probe"]["http_status"] != 403:
             REPORT["system_state"] = "SOURCE_UNAVAILABLE"
             REPORT["reason_code"] = "PREFLIGHT_FAILED_BROWSER_NOT_ATTEMPTED"
         else:
+            # curl 403 alone does not prove a browser gets 403. Verify once with
+            # real Chromium, without spoofing headers or bypassing challenges.
+            REPORT["preflight_probe"]["browser_fallback_allowed"] = not preflight_passed
             REPORT["system_state"] = "PARTIAL_COVERAGE"
             await browser_probe()
     except Exception as exc:
