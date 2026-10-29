@@ -247,9 +247,9 @@ async def main():
         if not preflight():
             REPORT["system_state"] = "SOURCE_UNAVAILABLE"
             REPORT["reason_code"] = "PREFLIGHT_FAILED_BROWSER_NOT_ATTEMPTED"
-            return
-        REPORT["system_state"] = "PARTIAL_COVERAGE"
-        await browser_probe()
+        else:
+            REPORT["system_state"] = "PARTIAL_COVERAGE"
+            await browser_probe()
     except Exception as exc:
         kind = str(exc) if isinstance(exc, ValueError) else type(exc).__name__
         REPORT["reason_code"] = kind[:90]
