@@ -16,7 +16,7 @@ from urllib.parse import urljoin, urlparse
 from playwright.async_api import async_playwright, TimeoutError as PlaywrightTimeoutError
 
 HOME = "https://www.marchespublics.gov.ma/index.php?page=entreprise.EntrepriseHome"
-SEARCH = "https://www.marchespublics.gov.ma/index.php?page=entreprise.EntrepriseAdvancedSearch&AllCons&EnCours&searchAnnCons"
+SEARCH = "https://www.marchespublics.gov.ma/?page=entreprise.EntrepriseAdvancedSearch&AllCons&searchAnnCons"
 OUT = Path("artifacts")
 OUT.mkdir(exist_ok=True)
 PAGER_INPUT = "#ctl0_CONTENU_PAGE_resultSearch_numPageTop"
