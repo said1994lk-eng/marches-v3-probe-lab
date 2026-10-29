@@ -87,6 +87,115 @@ async def soft_count(page):
     except Exception:
         return None
 
+async def pager_state(page, previous_first):
+    """Only non-sensitive pager metadata; URLs are never placed in public reports."""
+    return await page.evaluate("""prev => {
+        const marker = document.querySelector('#ctl0_CONTENU_PAGE_resultSearch_numPageTop');
+        const anchors = [...document.querySelectorAll(".tender_item a[href*='EntrepriseDetailsConsultation']")];
+        const next = document.querySelector('a#ctl0_CONTENU_PAGE_resultSearch_PagerTop_ctl2');
+        const href = anchors[0]?.getAttribute("href") || "";
+        return {
+            marker: (marker?.value || "").slice(0,12),
+            rows: document.querySelectorAll(".tender_item").length,
+            links: anchors.length,
+            first_changed: href !== "" && href !== prev,
+            next_exists: !!next,
+            next_disabled: !!(next?.hasAttribute("disabled") || next?.getAttribute("aria-disabled")==="true"),
+            ready_state: document.readyState
+        };
+    }""", previous_first)
+
+
+async def advance_page_verified(page, target, expected_rows, report, inflight):
+    """One click + DOM transition. Retry only if old page and no AJAX is active.
+
+    PRADO callbacks can arrive late: never blind double-click, and never treat
+    a row count alone as proof that the requested target page loaded.
+    """
+    previous = await page.locator(
+        ".tender_item a[href*='EntrepriseDetailsConsultation']"
+    ).first.get_attribute("href")
+    if not previous:
+        raise ValueError("PAGER_PREVIOUS_ANCHOR_MISSING")
+    old_state = await pager_state(page, previous)
+    diagnostic = {
+        "target_page": target,
+        "previous_marker": old_state["marker"],
+        "attempts": 0,
+        "pending_request_counts": [],
+        "final_state": None
+    }
+    report.setdefault("pagination_diagnostics", []).append(diagnostic)
+    if old_state["marker"] and old_state["marker"] != str(target-1):
+        diagnostic["error_code"] = "SOURCE_PAGER_MARKER_MISMATCH"
+        raise ValueError("SOURCE_PAGER_MARKER_MISMATCH")
+
+    async def observe_transition(timeout):
+        await page.wait_for_function("""args => {
+            const marker = document.querySelector('#ctl0_CONTENU_PAGE_resultSearch_numPageTop');
+            const links = [...document.querySelectorAll(".tender_item a[href*='EntrepriseDetailsConsultation']")];
+            const n = document.querySelectorAll('.tender_item').length;
+            const first = links[0]?.getAttribute('href') || '';
+            const last = links[links.length-1]?.getAttribute('href') || '';
+            const mark = marker?.value || '';
+            const valid = first && first !== args.previous && n === args.expected &&
+                          links.length === args.expected &&
+                          (!mark || mark === String(args.target));
+            if (!valid) { window.__v33PagerStable = null; return false; }
+            const fingerprint = String(n) + '|' + first + '|' + last + '|' + mark;
+            const p = window.__v33PagerStable;
+            if (!p || p.fingerprint !== fingerprint) {
+                window.__v33PagerStable = {fingerprint, since: performance.now()};
+                return false;
+            }
+            return performance.now() - p.since >= 900;
+        }""", arg={"previous":previous,"expected":expected_rows,"target":target},
+        timeout=timeout, polling=250)
+
+    for attempt in (1, 2):
+        diagnostic["attempts"] = attempt
+        current = await pager_state(page, previous)
+        diagnostic["pre_click_state"] = current
+        # The previous click may have completed while the await timed out.
+        if current["first_changed"] and current["marker"] == str(target) and current["rows"] == expected_rows:
+            await observe_transition(6000)
+            diagnostic["final_state"] = await pager_state(page, previous)
+            diagnostic["outcome"] = "LATE_RESPONSE_ACCEPTED"
+            return
+        if attempt == 2:
+            # A second click is allowed only if the old page is provably still
+            # active and the request tracker has no outstanding document/XHR.
+            await page.wait_for_timeout(2500)
+            current = await pager_state(page, previous)
+            diagnostic["pending_request_counts"].append(len(inflight))
+            diagnostic["state_before_retry"] = current
+            if (current["first_changed"] or
+                current["marker"] != str(target-1) or
+                len(inflight) != 0 or current["next_disabled"] or not current["next_exists"]):
+                diagnostic["error_code"] = "UNSAFE_TO_RECLICK"
+                diagnostic["final_state"] = current
+                raise ValueError("PAGINATION_UNCONFIRMED_NO_BLIND_RECLICK")
+        try:
+            # no_wait_after avoids waiting for a page navigation after the click;
+            # PRADO might use AJAX without any new DOMContentLoaded event.
+            await page.locator(NEXT).click(timeout=14000, no_wait_after=True)
+        except PlaywrightTimeoutError:
+            diagnostic["click_timeout_at_attempt"] = attempt
+        try:
+            await observe_transition(19000 if attempt == 1 else 22000)
+            diagnostic["final_state"] = await pager_state(page, previous)
+            diagnostic["outcome"] = "CONFIRMED"
+            return
+        except PlaywrightTimeoutError:
+            diagnostic["post_wait_state"] = await pager_state(page, previous)
+            diagnostic["pending_request_counts"].append(len(inflight))
+            if attempt == 2:
+                diagnostic["error_code"] = "PAGER_STABLE_TRANSITION_TIMEOUT"
+                diagnostic["final_state"] = diagnostic["post_wait_state"]
+                raise ValueError("PAGINATION_TIMEOUT")
+    raise ValueError("PAGINATION_UNCONFIRMED")
+
+
 async def browser_probe():
     health = REPORT["browser"]
     fa = REPORT["filter_attestation"]
@@ -108,6 +217,17 @@ async def browser_probe():
         health["resource_blocker_enabled"] = True
         page = await context.new_page()
         page.set_default_timeout(18000)
+        # Track only whether browser navigation / PRADO AJAX is still in-flight,
+        # not request paths, URLs, cookies or content.
+        inflight = set()
+        def on_request(req):
+            if req.resource_type in ("xhr", "fetch", "document"):
+                inflight.add(req)
+        def on_done(req):
+            inflight.discard(req)
+        page.on("request", on_request)
+        page.on("requestfinished", on_done)
+        page.on("requestfailed", on_done)
         try:
             REPORT["stage"] = "navigate"
             # The URL /?page=EntrepriseAdvancedSearch legitimately has pathname "/".
@@ -248,8 +368,10 @@ async def browser_probe():
                 if n < pages_needed:
                     previous = await page.locator(".tender_item a[href*='EntrepriseDetailsConsultation']").first.get_attribute("href")
                     REPORT["stage"] = f"paginate_{n+1}"
-                    await change_page(page, NEXT, n+1, previous, retries=1)
-                    await page.wait_for_timeout(400)
+                    await advance_page_verified(
+                        page, n+1, min(100, filtered-100*n), co, inflight
+                    )
+                    await page.wait_for_timeout(500)
             co["verified_complete"] = (
                 co["unique_consultations"] == filtered and
                 co["duplicates_seen"] == 0 and co["pages_traversed"] == pages_needed and
