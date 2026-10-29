@@ -8,10 +8,12 @@ Status: **offline implementation delivered; real portal behavior NOT verified.**
 - src/filter_attestation.py — independently checks source-labelled result categories; refuses unsupported success.
 - tests/test_navigation_recovery.py — offline navigation tests including Run #40904566211 reclassification.
 - tests/test_filter_attestation.py — offline filter-evidence tests.
+- src/gate1a02_probe.py — standalone entrypoint, **LIVE_TEST_DISABLED** by default; no external call unless ENABLE_LIVE_GATE1A02=1 is explicitly supplied.
+- tests/test_gate1a02_probe.py — confirms the entrypoint cannot contact the portal by default.
 
 ## What changed and what did not
 
-- Existing V3.2 and all workflows remain unchanged. No automatic integration, GitHub Actions dispatch, live request, database connection, Secrets, or DCE operations.
+- Existing V3.2 and all workflows remain unchanged. No automatic integration into V3.2, GitHub Actions dispatch, live request, database connection, Secrets, or DCE operations. The separate optional probe is disabled by default.
 - New navigation worker can make at most two allowlisted public-search-route navigations when separately called by a future integration. It refuses external redirect destinations and never retries clicks blindly.
 - A navigation timeout may leave stale DOM; the new worker detects a stale route when the browser URL differs.
 - A results-only page is NOT accepted as a ready advanced-search form.
@@ -25,7 +27,7 @@ Status: **offline implementation delivered; real portal behavior NOT verified.**
 
 Python standard library only for tests. Tests use stub browser pages, not the public website.
 
-New Gate 1A-02 tests: 36 tests passed in isolated local run. GitHub-hosted CI has not been executed for this change.
+New Gate 1A-02 tests: 38 offline tests passed. All 63 tests in the combined local fixture-based suite passed. GitHub-hosted CI has not been executed for this change.
 
 ## Acceptance criteria still open
 
