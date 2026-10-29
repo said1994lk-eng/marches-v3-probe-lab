@@ -91,13 +91,15 @@ async def pager_state(page, previous_first):
     """Only non-sensitive pager metadata; URLs are never placed in public reports."""
     return await page.evaluate("""prev => {
         const marker = document.querySelector('#ctl0_CONTENU_PAGE_resultSearch_numPageTop');
-        const anchors = [...document.querySelectorAll(".tender_item a[href*='EntrepriseDetailsConsultation']")];
+        const cards = [...document.querySelectorAll(".tender_item")];
+        const anchors = cards.map(c => c.querySelector("a[href*='EntrepriseDetailsConsultation']")).filter(Boolean);
         const next = document.querySelector('a#ctl0_CONTENU_PAGE_resultSearch_PagerTop_ctl2');
         const href = anchors[0]?.getAttribute("href") || "";
         return {
             marker: (marker?.value || "").slice(0,12),
-            rows: document.querySelectorAll(".tender_item").length,
+            rows: cards.length,
             links: anchors.length,
+            all_detail_anchors: document.querySelectorAll(".tender_item a[href*='EntrepriseDetailsConsultation']").length,
             first_changed: href !== "" && href !== prev,
             next_exists: !!next,
             next_disabled: !!(next?.hasAttribute("disabled") || next?.getAttribute("aria-disabled")==="true"),
@@ -133,8 +135,9 @@ async def advance_page_verified(page, target, expected_rows, report, inflight):
     async def observe_transition(timeout):
         await page.wait_for_function("""args => {
             const marker = document.querySelector('#ctl0_CONTENU_PAGE_resultSearch_numPageTop');
-            const links = [...document.querySelectorAll(".tender_item a[href*='EntrepriseDetailsConsultation']")];
-            const n = document.querySelectorAll('.tender_item').length;
+            const cards = [...document.querySelectorAll(".tender_item")];
+            const links = cards.map(c => c.querySelector("a[href*='EntrepriseDetailsConsultation']")).filter(Boolean);
+            const n = cards.length;
             const first = links[0]?.getAttribute('href') || '';
             const last = links[links.length-1]?.getAttribute('href') || '';
             const mark = marker?.value || '';
