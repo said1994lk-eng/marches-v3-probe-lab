@@ -1,0 +1,42 @@
+name: "30 - Source Reliability V3.2 (read-only)"
+on:
+  push:
+    paths:
+      - ".github/workflows/30-source-reliability.yml"
+      - "src/reliability_v32.py"
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: public-source-reliability-v32
+  cancel-in-progress: false
+jobs:
+  reliability:
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Verify Python syntax before network
+        run: python -m py_compile src/reliability_v32.py src/full_coverage.py
+      - name: Install browser dependencies
+        run: |
+          python -m pip install -r requirements.txt
+          python -m playwright install --with-deps chromium
+      - name: Run V3.2 bounded reliability gates
+        env:
+          MAX_PAGES: '20'
+          PYTHONUNBUFFERED: '1'
+        run: python src/reliability_v32.py
+      - name: "Publish aggregate JSON evidence even on failures"
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: v3-2-reliability-report
+          path: artifacts/reliability-coverage-report.json
+          retention-days: 2
+          if-no-files-found: warn
