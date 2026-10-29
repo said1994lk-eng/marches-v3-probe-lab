@@ -4,6 +4,7 @@ on:
     paths:
       - ".github/workflows/30-source-reliability.yml"
       - "src/reliability_v32.py"
+      - "src/full_coverage.py"
   workflow_dispatch:
 permissions:
   contents: read
