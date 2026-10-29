@@ -420,3 +420,4 @@ async def main():
 
 if __name__ == "__main__":
     asyncio.run(main())
+# Read-only V3.2 single-run verification marker (2026-10-29; no logic changes).
