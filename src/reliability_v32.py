@@ -116,10 +116,23 @@ async def browser_probe():
             for navigation_index, target_url in enumerate(route_urls, start=1):
                 health["navigation_attempts"] = navigation_index
                 health["navigation_mode"] = "user_supplied_url" if navigation_index == 1 else "previously_successful_official_url"
-                r = await page.goto(target_url, wait_until="domcontentloaded", timeout=35000)
-                health["search_http_status"] = r.status if r else None
-                if not r or r.status != 200:
-                    raise ValueError("SEARCH_HTTP_NOT_200")
+                try:
+                    r = await page.goto(target_url, wait_until="domcontentloaded", timeout=28000)
+                    health["search_http_status"] = r.status if r else None
+                    if not r or r.status != 200:
+                        raise ValueError("SEARCH_HTTP_NOT_200")
+                except PlaywrightTimeoutError:
+                    health["navigation_timeout_" + str(navigation_index)] = True
+                    # Inspect only public DOM structure; incomplete loading is not
+                    # considered a redirect, nor is an empty select list conclusive.
+                    try:
+                        health["dom_after_navigation_" + str(navigation_index)] = await safe_dom_snapshot(page)
+                    except Exception:
+                        health["dom_after_navigation_" + str(navigation_index)] = {"status":"UNREADABLE"}
+                    if navigation_index == len(route_urls):
+                        raise ValueError("BOTH_OFFICIAL_ROUTES_DOMCONTENTLOADED_TIMEOUT")
+                    await page.wait_for_timeout(1500)
+                    continue
                 # Avoid recording complete URLs, cookies, form field values or HTML.
                 health["dom_after_navigation_" + str(navigation_index)] = await safe_dom_snapshot(page)
                 if await category.count():
