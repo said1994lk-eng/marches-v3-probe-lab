@@ -9,7 +9,6 @@ import json
 import os
 import re
 import time
-import subprocess
 from datetime import datetime, timezone
 from pathlib import Path
 from playwright.async_api import async_playwright, TimeoutError as PlaywrightTimeoutError
@@ -26,8 +25,8 @@ REPORT = {
     "commit": os.getenv("GITHUB_SHA", "")[:12] or None,
     "system_state": "NOT_STARTED",
     "preflight_probe": {
-        "passed": False, "attempts_used": 0, "http_status": None,
-        "last_latency_ms": None, "attempts": [], "circuit_breaker_tripped": False
+        "status": "SKIPPED_BROWSER_FIRST",
+        "reason": "curl 403 does not determine Chromium reachability"
     },
     "browser": {
         "started": False, "navigation_mode": "official_advanced_search",
@@ -53,48 +52,28 @@ REPORT = {
     "database_writes": 0, "documents_downloaded": 0
 }
 
-def preflight():
-    """Two strictly bounded curl GETs. 6s network cap, 8s process cap."""
-    result = REPORT["preflight_probe"]
-    for attempt in range(1, 3):
-        started = time.monotonic()
-        status = None
-        error = None
-        try:
-            cmd = [
-                "curl", "--silent", "--show-error", "--max-time", "6",
-                "--connect-timeout", "4", "--max-redirs", "0",
-                "--range", "0-63", "--output", "/dev/null",
-                "--write-out", "%{http_code}", SEARCH
-            ]
-            proc = subprocess.run(cmd, capture_output=True, text=True, timeout=8)
-            if proc.stdout.strip().isdigit():
-                value = int(proc.stdout.strip())
-                if value > 0:
-                    status = value
-            if proc.returncode != 0:
-                error = "CURL_EXIT_" + str(proc.returncode)
-        except subprocess.TimeoutExpired:
-            error = "PROCESS_TIMEOUT_8S"
-        except FileNotFoundError:
-            error = "CURL_NOT_INSTALLED"
-        except Exception as exc:
-            error = type(exc).__name__
-        latency = round((time.monotonic() - started)*1000)
-        result["attempts"].append({
-            "attempt": attempt, "status": status,
-            "latency_ms": latency, "error_type": error
-        })
-        result["attempts_used"] = attempt
-        result["http_status"] = status
-        result["last_latency_ms"] = latency
-        if status == 200 and error is None:
-            result["passed"] = True
-            break
-        if attempt == 1:
-            time.sleep(1)
-    result["circuit_breaker_tripped"] = not result["passed"]
-    return result["passed"]
+async def safe_dom_snapshot(page):
+    """Public control metadata only: no cookies, hidden-field data or typed values."""
+    return await page.evaluate("""() => {
+      const u = new URL(location.href);
+      return {
+        page_query_parameter: u.searchParams.get('page'),
+        pathname: u.pathname,
+        ready_state: document.readyState,
+        has_result_count_label: /Nombre de résultats/i.test(document.body?.innerText || ''),
+        tender_cards: document.querySelectorAll('.tender_item').length,
+        category_control_found: !!document.querySelector('#ctl0_CONTENU_PAGE_AdvancedSearch_categorie'),
+        select_controls: [...document.querySelectorAll('select')].slice(0,20).map(s => ({
+          id: s.id.slice(0,120),
+          name: (s.getAttribute('name') || '').slice(0,120),
+          options_count: s.options.length,
+          sample_options: [...s.options].slice(0,6).map(o => ({
+            value: String(o.value).slice(0,60),
+            text: (o.textContent || '').trim().slice(0,80)
+          }))
+        }))
+      };
+    }""")
 
 async def soft_count(page):
     try:
@@ -127,22 +106,32 @@ async def browser_probe():
         page.set_default_timeout(18000)
         try:
             REPORT["stage"] = "navigate"
-            for attempt in range(1, 3):
-                health["navigation_attempts"] = attempt
-                try:
-                    r = await page.goto(SEARCH, wait_until="commit", timeout=24000)
-                    health["search_http_status"] = r.status if r else None
-                    if r and r.status == 200:
-                        break
-                    if attempt == 2:
-                        raise ValueError("SEARCH_NOT_200")
-                except PlaywrightTimeoutError:
-                    if attempt == 2:
-                        raise ValueError("BROWSER_NAV_TIMEOUT")
-                await page.wait_for_timeout(1000)
-            REPORT["stage"] = "await_search_form"
+            # The URL /?page=EntrepriseAdvancedSearch legitimately has pathname "/".
+            # Check its query and the DOM; never treat pathname "/" alone as a redirect.
+            route_urls = [
+                SEARCH,
+                "https://www.marchespublics.gov.ma/index.php?page=entreprise.EntrepriseAdvancedSearch&AllCons&EnCours&searchAnnCons",
+            ]
             category = page.locator("#ctl0_CONTENU_PAGE_AdvancedSearch_categorie")
-            await category.wait_for(state="attached", timeout=20000)
+            for navigation_index, target_url in enumerate(route_urls, start=1):
+                health["navigation_attempts"] = navigation_index
+                health["navigation_mode"] = "user_supplied_url" if navigation_index == 1 else "previously_successful_official_url"
+                r = await page.goto(target_url, wait_until="domcontentloaded", timeout=35000)
+                health["search_http_status"] = r.status if r else None
+                if not r or r.status != 200:
+                    raise ValueError("SEARCH_HTTP_NOT_200")
+                # Avoid recording complete URLs, cookies, form field values or HTML.
+                health["dom_after_navigation_" + str(navigation_index)] = await safe_dom_snapshot(page)
+                if await category.count():
+                    break
+                # Some routes land directly on a results view, without a filter form.
+                # Keep evidence and try the older official route once, not indefinitely.
+                health["category_missing_after_navigation_" + str(navigation_index)] = True
+            REPORT["stage"] = "await_search_form"
+            if not await category.count():
+                raise ValueError("CATEGORY_SELECTOR_ABSENT_AFTER_BOTH_OFFICIAL_ROUTES")
+            await category.wait_for(state="attached", timeout=10000)
+            health["select_diagnostics_before_filter"] = await safe_dom_snapshot(page)
             REPORT["stage"] = "filter"
             fa["unfiltered_total_seen"] = await soft_count(page)
             await category.select_option(label="Fournitures", timeout=12000)
@@ -243,16 +232,7 @@ async def browser_probe():
         finally:
             # Compact public DOM evidence, no form values, cookies, URLs or secrets.
             try:
-                health["dom_diagnostics"] = await asyncio.wait_for(page.evaluate("""() => ({
-                  title: (document.title || '').slice(0,100),
-                  pathname: location.pathname.slice(0,90),
-                  has_search_keyword: /recherche avancée/i.test(document.body?.innerText || ''),
-                  has_results_keyword: /nombre de résultats/i.test(document.body?.innerText || ''),
-                  category_control_found: !!document.querySelector('#ctl0_CONTENU_PAGE_AdvancedSearch_categorie'),
-                  total_select_controls: document.querySelectorAll('select').length,
-                  total_forms: document.querySelectorAll('form').length,
-                  document_ready_state: document.readyState
-                })"""), timeout=4)
+                health["dom_diagnostics"] = await asyncio.wait_for(safe_dom_snapshot(page), timeout=5)
             except Exception:
                 health["dom_diagnostics"] = {"status":"UNAVAILABLE"}
             health["browser_duration_ms"] = round((time.monotonic()-started)*1000)
@@ -260,17 +240,9 @@ async def browser_probe():
 
 async def main():
     try:
-        REPORT["stage"] = "preflight"
-        preflight_passed = preflight()
-        if not preflight_passed and REPORT["preflight_probe"]["http_status"] != 403:
-            REPORT["system_state"] = "SOURCE_UNAVAILABLE"
-            REPORT["reason_code"] = "PREFLIGHT_FAILED_BROWSER_NOT_ATTEMPTED"
-        else:
-            # curl 403 alone does not prove a browser gets 403. Verify once with
-            # real Chromium, without spoofing headers or bypassing challenges.
-            REPORT["preflight_probe"]["browser_fallback_allowed"] = not preflight_passed
-            REPORT["system_state"] = "PARTIAL_COVERAGE"
-            await browser_probe()
+        REPORT["stage"] = "browser_first"
+        REPORT["system_state"] = "PARTIAL_COVERAGE"
+        await browser_probe()
     except Exception as exc:
         kind = str(exc) if isinstance(exc, ValueError) else type(exc).__name__
         REPORT["reason_code"] = kind[:90]
@@ -278,7 +250,7 @@ async def main():
         REPORT["error_stage"] = stage
         if stage.startswith("filter"):
             REPORT["system_state"] = "FILTER_NOT_APPLIED"
-        elif stage in ("navigate", "browser_start"):
+        elif stage in ("navigate", "browser_start", "browser_first"):
             REPORT["system_state"] = "SOURCE_UNAVAILABLE"
         else:
             REPORT["system_state"] = "PARTIAL_COVERAGE"
