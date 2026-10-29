@@ -1,0 +1,79 @@
+name: "40 - Gate 1A-03 Official Search Evidence (read-only, single push)"
+on:
+  push:
+    paths:
+      - ".github/workflows/40-gate1a03-once.yml"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: gate1a03-public-search-single-check
+  cancel-in-progress: false
+
+jobs:
+  gate1a03:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Checkout without persisted credentials
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Verify syntax and all offline regressions before network
+        run: |
+          python -m py_compile src/page_state.py src/navigation_recovery.py src/filter_attestation.py src/gate1a02_probe.py
+          python -m unittest discover -s tests -q
+
+      - name: Install browser for one bounded read-only check
+        run: |
+          python -m pip install -r requirements.txt
+          python -m playwright install --with-deps chromium
+
+      - name: Exactly one bounded public navigation and filter check
+        env:
+          ENABLE_LIVE_GATE1A02: "1"
+          PYTHONUNBUFFERED: "1"
+        run: |
+          mkdir -p artifacts
+          set -o pipefail
+          python src/gate1a02_probe.py 2>&1 | tee artifacts/gate1a03_console.log
+
+      - name: Persist actual probe JSON even when probe fails
+        if: always()
+        run: |
+          mkdir -p artifacts
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          p = Path("artifacts/gate1a03_console.log")
+          s = p.read_text(encoding="utf-8", errors="replace") if p.exists() else ""
+          opening = "BEGIN_GATE1A02_JSON"
+          closing = "END_GATE1A02_JSON"
+          if opening in s and closing in s.split(opening, 1)[1]:
+              raw = s.split(opening, 1)[1].split(closing, 1)[0].strip()
+              try:
+                  report = json.loads(raw)
+              except json.JSONDecodeError:
+                  report = {"schema": "gate1a03-wrapper/1", "status": "INVALID_PROBE_JSON"}
+          else:
+              report = {"schema": "gate1a03-wrapper/1", "status": "PROBE_JSON_NOT_EMITTED"}
+          Path("artifacts/gate1a03-report.json").write_text(
+              json.dumps(report, indent=2, ensure_ascii=False) + "\n", encoding="utf-8"
+          )
+          PY
+
+      - name: Upload JSON evidence including on failure
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: gate1a03-public-search-report
+          path: artifacts/gate1a03-report.json
+          retention-days: 2
+          if-no-files-found: error
