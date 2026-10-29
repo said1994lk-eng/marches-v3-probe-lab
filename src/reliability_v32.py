@@ -62,6 +62,10 @@ async def safe_dom_snapshot(page):
         ready_state: document.readyState,
         has_result_count_label: /Nombre de résultats/i.test(document.body?.innerText || ''),
         tender_cards: document.querySelectorAll('.tender_item').length,
+        body_text_length: (document.body?.innerText || '').length,
+        body_html_length: (document.body?.innerHTML || '').length,
+        script_count: document.querySelectorAll('script').length,
+        form_count: document.querySelectorAll('form').length,
         category_control_found: !!document.querySelector('#ctl0_CONTENU_PAGE_AdvancedSearch_categorie'),
         select_controls: [...document.querySelectorAll('select')].slice(0,20).map(s => ({
           id: s.id.slice(0,120),
@@ -133,6 +137,17 @@ async def browser_probe():
                         raise ValueError("BOTH_OFFICIAL_ROUTES_DOMCONTENTLOADED_TIMEOUT")
                     await page.wait_for_timeout(1500)
                     continue
+                # PRADO controls may render asynchronously after DOMContentLoaded.
+                # A timeout means "not observed", never "no results" or "WAF proven".
+                try:
+                    await page.wait_for_function("""() =>
+                      !!document.querySelector('#ctl0_CONTENU_PAGE_AdvancedSearch_categorie')
+                      || !!document.querySelector('.tender_item')
+                      || /Nombre de résultats/i.test(document.body?.innerText || '')
+                    """, timeout=12000)
+                    health["public_content_ready_" + str(navigation_index)] = True
+                except PlaywrightTimeoutError:
+                    health["public_content_ready_" + str(navigation_index)] = False
                 # Avoid recording complete URLs, cookies, form field values or HTML.
                 health["dom_after_navigation_" + str(navigation_index)] = await safe_dom_snapshot(page)
                 if await category.count():
