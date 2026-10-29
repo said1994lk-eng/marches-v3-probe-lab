@@ -9,8 +9,7 @@ import json
 import os
 import re
 import time
-import urllib.error
-import urllib.request
+import subprocess
 from datetime import datetime, timezone
 from pathlib import Path
 from playwright.async_api import async_playwright, TimeoutError as PlaywrightTimeoutError
@@ -55,27 +54,30 @@ REPORT = {
 }
 
 def preflight():
-    """Two bounded simple GETs; absence of response is not proof of WAF block."""
+    """Two strictly bounded curl GETs. 6s network cap, 8s process cap."""
     result = REPORT["preflight_probe"]
     for attempt in range(1, 3):
         started = time.monotonic()
         status = None
         error = None
         try:
-            # Do not spoof a browser or follow redirects to non-official hosts.
-            req = urllib.request.Request(
-                SEARCH,
-                method="GET",
-                headers={"Accept": "text/html", "Accept-Language": "fr-FR,fr;q=0.9"},
-            )
-            with urllib.request.urlopen(req, timeout=6) as response:
-                status = response.status
-                # Headers + tiny body sample confirm a delivered response,
-                # not portal search functionality.
-                response.read(64)
-        except urllib.error.HTTPError as exc:
-            status = exc.code
-            error = "HTTP_ERROR"
+            cmd = [
+                "curl", "--silent", "--show-error", "--max-time", "6",
+                "--connect-timeout", "4", "--max-redirs", "0",
+                "--range", "0-63", "--output", "/dev/null",
+                "--write-out", "%{http_code}", SEARCH
+            ]
+            proc = subprocess.run(cmd, capture_output=True, text=True, timeout=8)
+            if proc.stdout.strip().isdigit():
+                value = int(proc.stdout.strip())
+                if value > 0:
+                    status = value
+            if proc.returncode != 0:
+                error = "CURL_EXIT_" + str(proc.returncode)
+        except subprocess.TimeoutExpired:
+            error = "PROCESS_TIMEOUT_8S"
+        except FileNotFoundError:
+            error = "CURL_NOT_INSTALLED"
         except Exception as exc:
             error = type(exc).__name__
         latency = round((time.monotonic() - started)*1000)
@@ -86,7 +88,7 @@ def preflight():
         result["attempts_used"] = attempt
         result["http_status"] = status
         result["last_latency_ms"] = latency
-        if status == 200:
+        if status == 200 and error is None:
             result["passed"] = True
             break
         if attempt == 1:
