@@ -127,12 +127,34 @@ async def run():
         page.set_default_timeout(20000)
         try:
             gate["stage"]="open_home"
-            res = await page.goto(HOME,wait_until="commit",timeout=45000)
+            # Public portal intermittently times out from cloud IPs. Retry only
+            # the read-only navigation, with a small bound and explicit counts.
+            res=None
+            for attempt in range(1,4):
+                gate["home_attempts"]=attempt
+                try:
+                    res=await page.goto(HOME,wait_until="commit",timeout=30000)
+                    if res and res.status < 400:
+                        break
+                except PlaywrightTimeoutError:
+                    if attempt==3:
+                        raise ValueError("HOME_TIMEOUT_AFTER_3_ATTEMPTS")
+                await page.wait_for_timeout(1500*attempt)
             gate["home_http_status"] = res.status if res else None
             if not res or res.status>=400:
                 raise ValueError("PORTAL_HOME_HTTP_FAILED")
             gate["stage"]="open_search"
-            sr = await page.goto(SEARCH,wait_until="domcontentloaded",timeout=45000)
+            sr=None
+            for attempt in range(1,3):
+                gate["search_attempts"]=attempt
+                try:
+                    sr=await page.goto(SEARCH,wait_until="domcontentloaded",timeout=30000)
+                    if sr and sr.status < 400:
+                        break
+                except PlaywrightTimeoutError:
+                    if attempt==2:
+                        raise ValueError("SEARCH_TIMEOUT_AFTER_2_ATTEMPTS")
+                await page.wait_for_timeout(1800)
             gate["search_http_status"] = sr.status if sr else None
             if not sr or sr.status>=400:
                 raise ValueError("SEARCH_HTTP_FAILED")
