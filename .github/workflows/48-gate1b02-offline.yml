@@ -22,3 +22,4 @@ jobs:
         run: |
           python -m py_compile src/gate1b_attestation.py src/gate1b02_dom_evidence.py src/gate1b02_probe.py
           python -m unittest discover -s tests -v
+          echo 'GATE1B02_OFFLINE_VALIDATED'
