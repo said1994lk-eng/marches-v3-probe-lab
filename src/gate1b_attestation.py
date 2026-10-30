@@ -168,8 +168,14 @@ async def _settle_prado(page: Any, pending: set[int], *, timeout_ms: int = 9000,
     return False, False, None
 
 
-async def run_gate_1b(page: Any, context: Any) -> dict[str, Any]:
-    """Call ONLY after navigation.form_ready. Does not retry the search click."""
+async def run_gate_1b(page: Any, context: Any, *, max_detail_pages: int = 5) -> dict[str, Any]:
+    """Call ONLY after navigation.form_ready; one search click, no retry.
+
+    max_detail_pages=0 enables a zero-detail discovery mode so a newer,
+    separately reviewed spot-check can make exactly one public detail GET.
+    """
+    if not 0 <= max_detail_pages <= 5:
+        raise ValueError("INVALID_DETAIL_BUDGET")
     started = time.monotonic()
     report: dict[str, Any] = {
         "schema": "marches-gate1b-filter/1",
@@ -305,10 +311,12 @@ async def run_gate_1b(page: Any, context: Any) -> dict[str, Any]:
         cards = await inspect_public_cards(page, max_cards=SAMPLE_LIMIT)
         missing_positions = [i for i, c in enumerate(cards) if c.get("status") != "EXPLICIT"]
         details = []
-        if missing_positions:
+        if missing_positions and max_detail_pages > 0:
             links = await sampled_detail_links(page, max_links=SAMPLE_LIMIT)
             positional = [links[i] if i < len(links) else None for i in missing_positions]
-            details = await inspect_few_details(context, positional, limit=SAMPLE_LIMIT)
+            details = await inspect_few_details(
+                context, positional[:max_detail_pages], limit=max_detail_pages
+            )
         sample = aggregate_samples(cards, details)
         decision = assess_gate(
             selected=selected, settled=settled,
