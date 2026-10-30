@@ -10,7 +10,8 @@ from dataclasses import dataclass, asdict
 from typing import Any, Mapping
 from urllib.parse import parse_qs, urljoin, urlparse
 
-from category_evidence import inspect_public_detail, recognized_record
+from category_evidence import recognized_record
+from gate1b02_detail_parser import strict_detail_category
 
 HOST = "www.marchespublics.gov.ma"
 DETAIL_PAGE_NAMES = (
@@ -77,7 +78,8 @@ CARD_ATTR_JS = r"""(limit) => {
 }"""
 
 DETAIL_STRUCTURE_JS = r"""() => {
- const root=document.querySelector('#ctl0_CONTENU_PAGE') || document.querySelector('main');
+ const root=document.querySelector('#ctl0_CONTENU_PAGE') || document.querySelector('main') ||
+   document.querySelector('[id^="ctl0_CONTENU_PAGE_"]') || document.body;
  if (!root) return {container_present:false, explicit_category_label_present:false,
                     category_attribute_candidates:0, label_tag_types:[]};
  function fold(s) {return (s || '').trim().toLowerCase().normalize('NFD')
@@ -246,12 +248,14 @@ async def inspect_one_public_detail(context: Any, url: str | None) -> dict[str, 
             report["status"] = "PUBLIC_DETAIL_NOT_AVAILABLE"
             return report
         try:
-            await page.wait_for_function("""() => !!document.querySelector(
-              '#ctl0_CONTENU_PAGE, main')""",timeout=9000)
+            await page.wait_for_function("""() => !!document.body &&
+                document.readyState !== 'loading' &&
+                (document.body.innerText || '').trim().length > 30
+            """,timeout=9000)
         except Exception:
             report["status"] = "DETAIL_BODY_NOT_READY"
             return report
-        field=await inspect_public_detail(page)
+        field=await strict_detail_category(page)
         structure=await page.evaluate(DETAIL_STRUCTURE_JS)
         category, reason=recognized_record(field)
         report["detail_field"] = {
@@ -261,6 +265,10 @@ async def inspect_one_public_detail(context: Any, url: str | None) -> dict[str, 
                       {"explicit_label_pair","explicit_inline_label","explicit_data_attribute"} else None,
             "official_category": category,
             "reason_code":reason,
+            "context":field.get("context"),
+            "explicit_label_nodes":field.get("explicit_label_nodes"),
+            "body_text_bucket":field.get("body_text_bucket"),
+            "ready_state":field.get("ready_state"),
         }
         report["structure"] = structure if isinstance(structure,dict) else None
         report["status"] = "DETAIL_INSPECTED"
