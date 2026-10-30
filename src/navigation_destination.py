@@ -17,6 +17,12 @@ def classify_destination(url: str) -> str:
     """Return a low-information code; no raw URL/path/query in output."""
     if not isinstance(url, str) or not url.strip():
         return 'UNKNOWN_DESTINATION'
+    # Chromium can remain at about:blank if goto timed out before commit.
+    # It is not an external destination and must never count as portal content.
+    if url.strip().lower() == 'about:blank':
+        return 'BROWSER_BLANK_DOCUMENT'
+    if url.strip().lower().startswith('chrome-error://'):
+        return 'BROWSER_ERROR_DOCUMENT'
     try:
         u = urlparse(url)
         if (u.scheme != 'https' or u.hostname != HOST or
