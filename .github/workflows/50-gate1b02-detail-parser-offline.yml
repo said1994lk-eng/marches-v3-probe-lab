@@ -1,0 +1,30 @@
+name: "50 - Gate 1B-02 Detail Parser Offline"
+on:
+  push:
+    paths:
+      - ".github/workflows/50-gate1b02-detail-parser-offline.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  parser:
+    runs-on: ubuntu-latest
+    timeout-minutes: 4
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Python strict parser and all regressions
+        run: |
+          python -m py_compile src/gate1b02_detail_parser.py src/gate1b02_dom_evidence.py src/gate1b02_probe.py
+          python -m unittest discover -s tests -q
+      - name: Install Chromium for local fake DOM only
+        run: |
+          python -m pip install -r requirements.txt
+          python -m playwright install --with-deps chromium
+      - name: Check category table fields and exclusions on local HTML
+        run: python tests/gate1b02_browser_fixture.py
