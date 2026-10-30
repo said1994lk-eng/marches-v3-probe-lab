@@ -1,0 +1,78 @@
+name: "42 - Gate 1A-05 Redirect and Category Evidence (single bounded run)"
+on:
+  push:
+    paths:
+      - ".github/workflows/42-gate1a05-redirect-evidence-once.yml"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: gate1a05-single-public-readonly-probe
+  cancel-in-progress: false
+
+jobs:
+  evidence:
+    runs-on: ubuntu-latest
+    timeout-minutes: 6
+    steps:
+      - name: Checkout without persisted credentials
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Offline regressions and syntax checks (before any live requests)
+        run: |
+          python -m py_compile src/page_state.py src/navigation_destination.py src/navigation_recovery.py src/category_evidence.py src/filter_evidence_gate1a04.py src/gate1a04_probe.py
+          python -m unittest discover -s tests -q
+
+      - name: Install minimal Playwright browser
+        run: |
+          python -m pip install -r requirements.txt
+          python -m playwright install --with-deps chromium
+
+      - name: Execute exactly one bounded public read-only evidence probe
+        env:
+          ENABLE_LIVE_GATE1A04: "1"
+          PYTHONUNBUFFERED: "1"
+        shell: bash
+        run: |
+          set -o pipefail
+          mkdir -p artifacts
+          python src/gate1a04_probe.py 2>&1 | tee artifacts/gate1a05_console.log
+
+      - name: Preserve sanitized JSON evidence even if check fails
+        if: always()
+        run: |
+          mkdir -p artifacts
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          log=Path("artifacts/gate1a05_console.log")
+          raw=log.read_text(encoding="utf-8",errors="replace") if log.exists() else ""
+          start,end="BEGIN_GATE1A04_JSON","END_GATE1A04_JSON"
+          if start in raw and end in raw.split(start,1)[1]:
+              try:
+                  report=json.loads(raw.split(start,1)[1].split(end,1)[0].strip())
+              except (ValueError,IndexError):
+                  report={"schema":"gate1a05-wrapper/1","status":"INVALID_JSON"}
+          else:
+              report={"schema":"gate1a05-wrapper/1","status":"PROBE_JSON_NOT_EMITTED"}
+          Path("artifacts/gate1a05-report.json").write_text(
+              json.dumps(report,ensure_ascii=False,indent=2)+"\n",encoding="utf-8"
+          )
+          PY
+
+      - name: Upload bounded result without raw HTML or credentials
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: gate1a05-sanitized-redirect-and-category-report
+          path: artifacts/gate1a05-report.json
+          retention-days: 3
+          if-no-files-found: error
