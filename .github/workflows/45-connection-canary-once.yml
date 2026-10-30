@@ -1,0 +1,70 @@
+name: "45 - Live Navigation Commit Canary (one bounded run)"
+on:
+  push:
+    paths:
+      - ".github/workflows/45-connection-canary-once.yml"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: official-public-navigation-single-canary
+  cancel-in-progress: false
+
+jobs:
+  navigation:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Prove offline tests and syntax first
+        run: |
+          python -m py_compile src/navigation_recovery.py src/gate1a07_navigation_canary.py
+          python -m unittest discover -s tests -q
+      - name: Install Chromium
+        run: |
+          python -m pip install -r requirements.txt
+          python -m playwright install --with-deps chromium
+      - name: Run one direct canary of shared navigation module
+        shell: bash
+        env:
+          ENABLE_LIVE_NAVIGATION_CANARY: "1"
+          PYTHONUNBUFFERED: "1"
+        run: |
+          mkdir -p artifacts
+          set -o pipefail
+          python src/gate1a07_navigation_canary.py 2>&1 | tee artifacts/gate1a07-navigation-console.log
+      - name: Preserve sanitized report on failure or success
+        if: always()
+        run: |
+          mkdir -p artifacts
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          p=Path("artifacts/gate1a07-navigation-console.log")
+          s=p.read_text(encoding="utf-8",errors="replace") if p.exists() else ""
+          a,b="BEGIN_GATE1A07_NAV_JSON","END_GATE1A07_NAV_JSON"
+          if a in s and b in s.split(a,1)[1]:
+              try:
+                  result=json.loads(s.split(a,1)[1].split(b,1)[0].strip())
+              except (ValueError,IndexError):
+                  result={"schema":"gate1a07-nav-wrapper/1","status":"INVALID_JSON"}
+          else:
+              result={"schema":"gate1a07-nav-wrapper/1","status":"PROBE_JSON_NOT_EMITTED"}
+          Path("artifacts/gate1a07-navigation-report.json").write_text(
+              json.dumps(result,ensure_ascii=False,indent=2)+"\n",encoding="utf-8"
+          )
+          PY
+      - name: Publish navigational evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: gate1a07-navigation-canary-report
+          path: artifacts/gate1a07-navigation-report.json
+          retention-days: 3
+          if-no-files-found: error
