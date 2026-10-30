@@ -12,6 +12,7 @@ from urllib.parse import parse_qs, urljoin, urlparse
 
 from category_evidence import recognized_record
 from gate1b02_detail_parser import strict_detail_category
+from gate1b02_detail_readiness import wait_detail_readiness
 
 HOST = "www.marchespublics.gov.ma"
 DETAIL_PAGE_NAMES = (
@@ -224,7 +225,8 @@ async def one_detail_link(page: Any) -> str | None:
 async def inspect_one_public_detail(context: Any, url: str | None) -> dict[str, Any]:
     """At most one detail GET with commit-first navigation and sanitized report."""
     report = {"status":"NOT_CHECKED","http_status":None,
-              "detail_field":None,"structure":None}
+              "detail_field":None,"structure":None,
+              "readiness":None,"diagnostics":None}
     if url is None or allowed_detail_url(url,url) is None:
         report["status"] = "DETAIL_LINK_NOT_VERIFIED"
         return report
@@ -247,13 +249,21 @@ async def inspect_one_public_detail(context: Any, url: str | None) -> dict[str, 
         if report["http_status"] != 200 or allowed_detail_url(page.url,page.url) is None:
             report["status"] = "PUBLIC_DETAIL_NOT_AVAILABLE"
             return report
-        try:
-            await page.wait_for_function("""() => !!document.body &&
-                document.readyState !== 'loading' &&
-                (document.body.innerText || '').trim().length > 30
-            """,timeout=9000)
-        except Exception:
-            report["status"] = "DETAIL_BODY_NOT_READY"
+        # A commit is NOT a parsed DOM. Also allow a separate bounded window
+        # for an explicit category label that PRADO might render later.
+        # A missing label is not automatically an unparsed document.
+        readiness = await wait_detail_readiness(
+            page, parse_timeout_ms=13000, label_timeout_ms=5000
+        )
+        report["readiness"] = readiness["status"]
+        report["diagnostics"] = readiness["telemetry"]
+        if readiness["status"] == "DETAIL_DOCUMENT_NOT_PARSED":
+            report["status"] = "DETAIL_DOCUMENT_NOT_PARSED"
+            return report
+        if (readiness["telemetry"]["title_class"] in
+                {"LOGIN_LIKE","MAINTENANCE_LIKE","ERROR_LIKE"} and
+                not readiness["telemetry"]["category_label_present"]):
+            report["status"] = "DETAIL_POSSIBLE_ERROR_PAGE"
             return report
         field=await strict_detail_category(page)
         structure=await page.evaluate(DETAIL_STRUCTURE_JS)
