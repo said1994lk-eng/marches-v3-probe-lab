@@ -116,7 +116,8 @@ def _approved_response(response: Any) -> bool:
         url = urlparse(response.url)
         return (url.scheme == "https" and url.hostname == HOST and
                 url.username is None and url.password is None and
-                url.port in (None, 443) and req.method == "POST" and
+                url.port in (None, 443) and url.path in ("/", "/index.php") and
+                not url.fragment and req.method == "POST" and
                 req.resource_type in {"xhr", "fetch", "document"})
     except Exception:
         return False
