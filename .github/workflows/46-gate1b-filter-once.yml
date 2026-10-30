@@ -1,0 +1,74 @@
+name: "46 - Gate 1B Fournitures Filter Evidence (single bounded run)"
+on:
+  push:
+    paths:
+      - ".github/workflows/46-gate1b-filter-once.yml"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: gate1b-one-prado-filter-evidence-run
+  cancel-in-progress: false
+
+jobs:
+  gate1b:
+    runs-on: ubuntu-latest
+    timeout-minutes: 7
+    steps:
+      - name: Checkout without persistent credentials
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: All offline tests and syntax validation (no portal requests)
+        run: |
+          python -m py_compile src/gate1b_attestation.py src/gate1b_probe.py
+          python -m unittest discover -s tests -q
+      - name: Install Chromium
+        run: |
+          python -m pip install -r requirements.txt
+          python -m playwright install --with-deps chromium
+      - name: Exactly one bounded PRADO filter evidence probe
+        env:
+          ENABLE_LIVE_GATE1B: "1"
+          PYTHONUNBUFFERED: "1"
+        shell: bash
+        run: |
+          mkdir -p artifacts
+          set -o pipefail
+          python src/gate1b_probe.py 2>&1 | tee artifacts/gate1b-console.log
+      - name: Save only sanitized JSON even if probe fails
+        if: always()
+        run: |
+          mkdir -p artifacts
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          p = Path("artifacts/gate1b-console.log")
+          s = p.read_text(encoding="utf-8", errors="replace") if p.exists() else ""
+          opening, closing = "BEGIN_GATE1B_JSON", "END_GATE1B_JSON"
+          if opening in s and closing in s.split(opening, 1)[1]:
+              raw = s.split(opening, 1)[1].split(closing, 1)[0].strip()
+              try:
+                  report = json.loads(raw)
+              except json.JSONDecodeError:
+                  report = {"schema": "gate1b-wrapper/1", "status": "INVALID_JSON"}
+          else:
+              report = {"schema": "gate1b-wrapper/1", "status": "PROBE_JSON_NOT_EMITTED"}
+          Path("artifacts/gate1b-report.json").write_text(
+              json.dumps(report, indent=2, ensure_ascii=False) + "\n",
+              encoding="utf-8"
+          )
+          PY
+      - name: Upload the evidence artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: gate1b-public-fournitures-evidence
+          path: artifacts/gate1b-report.json
+          retention-days: 3
+          if-no-files-found: error
