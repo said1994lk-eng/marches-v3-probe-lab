@@ -228,6 +228,18 @@ async def inspect_one_public_detail(context: Any, url: str | None) -> dict[str, 
         return report
     page = await context.new_page()
     try:
+        # A public detail URL might itself redirect. Do not navigate to an
+        # unrelated origin, login page, or a file/action endpoint.
+        route_api = getattr(page, "route", None)
+        if route_api is not None:
+            async def only_public_detail(route):
+                request = route.request
+                if (request.is_navigation_request() and
+                        allowed_detail_url(request.url, request.url) is None):
+                    await route.abort()
+                else:
+                    await route.continue_()
+            await page.route("**/*", only_public_detail)
         resp = await page.goto(url, wait_until="commit", timeout=17000)
         report["http_status"] = resp.status if resp else None
         if report["http_status"] != 200 or allowed_detail_url(page.url,page.url) is None:
