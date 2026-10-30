@@ -148,7 +148,7 @@ class ProbeTests(unittest.TestCase):
                 self.go_calls+=1
                 return Resp()
             async def wait_for_function(self,script,*,timeout): pass
-            async def evaluate(self,script):
+            async def evaluate(self,script,arg=None):
                 if script==DETAIL_STRUCTURE_JS:
                     return {"container_present":True,
                        "explicit_category_label_present":True,
