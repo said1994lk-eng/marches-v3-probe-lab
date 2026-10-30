@@ -121,8 +121,24 @@ async def recover_search_form(
                 return RecoveryResult(False, "NAVIGATION_EXCEPTION", None, tuple(observations))
             timed_out = True
 
-        # Prevent following a redirect to another host / private path.
+        # A timed-out first navigation may never commit: page.url can still be
+        # about:blank. Distinguish this from an actual external redirect.
+        # Only the one remaining preapproved public search URL may be tried.
         landed_url = getattr(page, "url", "")
+        if timed_out and classify_destination(landed_url) == "BROWSER_BLANK_DOCUMENT":
+            observations.append({
+                "route_id": route.id, "state": "BLANK_OR_LOADING",
+                "reason_code": "NAVIGATION_TIMEOUT_BEFORE_DOCUMENT",
+                "destination_class": "BROWSER_BLANK_DOCUMENT",
+                "http_status": response_status, "timed_out": True,
+                "recommended_action": (
+                    "TRY_NEXT_OFFICIAL_ROUTE" if index + 1 < len(routes)
+                    else "STOP_NAVIGATION_UNCONFIRMED"
+                ),
+            })
+            continue
+
+        # Prevent following a redirect to another host / private path.
         if landed_url and not is_allowed_search_url(landed_url):
             destination_class = classify_destination(landed_url)
             if is_benign_official_redirect(destination_class):
@@ -133,11 +149,13 @@ async def recover_search_form(
                 observations.append({"route_id": route.id, "state": "UNKNOWN_LAYOUT",
                                      "reason_code": "OFFICIAL_REDIRECT_TO_OTHER_ROUTE",
                                      "destination_class": destination_class,
+                                     "http_status": response_status, "timed_out": timed_out,
                                      "recommended_action": "TRY_NEXT_OFFICIAL_ROUTE"})
                 continue
             observations.append({"route_id": route.id, "state": "ERROR_PAGE",
                                  "reason_code": "UNEXPECTED_NAVIGATION_DESTINATION",
-                                 "destination_class": destination_class})
+                                 "destination_class": destination_class,
+                                 "http_status": response_status, "timed_out": timed_out})
             return RecoveryResult(False, "UNEXPECTED_NAVIGATION_DESTINATION", None, tuple(observations))
 
         # A timed-out goto can leave the *previous route's* DOM visible.
