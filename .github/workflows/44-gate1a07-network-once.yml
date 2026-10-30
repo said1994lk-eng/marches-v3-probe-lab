@@ -1,0 +1,73 @@
+name: "44 - Gate 1A-07 Connectivity Layers (one bounded run)"
+on:
+  push:
+    paths:
+      - ".github/workflows/44-gate1a07-network-once.yml"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: gate1a07-network-single-test
+  cancel-in-progress: false
+
+jobs:
+  connection:
+    runs-on: ubuntu-latest
+    timeout-minutes: 6
+    steps:
+      - name: Checkout without persisted credentials
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Validate all offline tests before network checks
+        run: |
+          python -m py_compile src/connectivity_gate1a07.py
+          python -m unittest discover -s tests -q
+      - name: Install headless Chromium
+        run: |
+          python -m pip install -r requirements.txt
+          python -m playwright install --with-deps chromium
+      - name: Run one portal vs control connection diagnosis
+        shell: bash
+        env:
+          ENABLE_LIVE_CONNECTIVITY_DIAGNOSTICS: "1"
+          PYTHONUNBUFFERED: "1"
+        run: |
+          mkdir -p artifacts
+          set -o pipefail
+          python src/connectivity_gate1a07.py 2>&1 | tee artifacts/gate1a07-console.log
+      - name: Preserve sanitized JSON regardless of failure
+        if: always()
+        run: |
+          mkdir -p artifacts
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          p=Path("artifacts/gate1a07-console.log")
+          s=p.read_text(encoding="utf-8",errors="replace") if p.exists() else ""
+          opening,closing="BEGIN_GATE1A07_JSON","END_GATE1A07_JSON"
+          if opening in s and closing in s.split(opening,1)[1]:
+              raw=s.split(opening,1)[1].split(closing,1)[0].strip()
+              try:
+                  result=json.loads(raw)
+              except (ValueError,IndexError):
+                  result={"schema":"gate1a07-wrapper/1","status":"INVALID_JSON"}
+          else:
+              result={"schema":"gate1a07-wrapper/1","status":"NO_PROBE_JSON"}
+          Path("artifacts/gate1a07-report.json").write_text(
+              json.dumps(result,ensure_ascii=False,indent=2)+"\n",encoding="utf-8"
+          )
+          PY
+      - name: Upload aggregate diagnostic evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: gate1a07-connectivity-evidence
+          path: artifacts/gate1a07-report.json
+          retention-days: 3
+          if-no-files-found: error
