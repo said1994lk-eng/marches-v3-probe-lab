@@ -7,6 +7,7 @@ sys.path.insert(0,str(Path(__file__).resolve().parents[1]/"src"))
 from playwright.async_api import async_playwright
 from gate1b02_dom_evidence import CARD_ATTR_JS, DETAIL_STRUCTURE_JS
 from category_evidence import CATEGORY_FIELDS_JS
+from gate1b02_detail_parser import DETAIL_CATEGORY_JS
 
 
 async def main():
@@ -39,6 +40,33 @@ async def main():
             assert detail["status"] == "EXPLICIT", detail
             assert detail["category"] == "fournitures", detail
             assert structure["explicit_category_label_present"] is True, structure
+            # The real detail page need not use <main> or the assumed ID.
+            await page.set_content('''<html><body><div class="other-layout"><table>
+              <tr><td><strong>Catégorie principale</strong></td><td>Fournitures</td></tr>
+              </table><p>Objet: travaux et fournitures (not evidence)</p>
+              </div></body></html>''')
+            strict = await page.evaluate(DETAIL_CATEGORY_JS)
+            assert strict["status"] == "EXPLICIT", strict
+            assert strict["category"] == "fournitures", strict
+            assert strict["context"] == "BODY_FALLBACK", strict
+
+            # Never infer a category from an object/title or filter dropdown.
+            await page.set_content('''<html><body>
+                <h2>Travaux et fournitures dans un objet de marche</h2>
+                <label>Catégorie principale</label>
+                <select><option selected="selected">Fournitures</option></select>
+              </body></html>''')
+            negative = await page.evaluate(DETAIL_CATEGORY_JS)
+            assert negative["status"] == "MISSING", negative
+
+            # Contradictory explicit categories must be ambiguous, not confirmed.
+            await page.set_content('''<html><body><table>
+              <tr><th>Catégorie principale</th><td>Fournitures</td></tr>
+              <tr><th>Catégorie principale</th><td>Travaux</td></tr>
+              </table></body></html>''')
+            ambiguous = await page.evaluate(DETAIL_CATEGORY_JS)
+            assert ambiguous["status"] == "AMBIGUOUS", ambiguous
+
             print("GATE1B02_CHROMIUM_FIXTURE_PASS")
         finally:
             await browser.close()
