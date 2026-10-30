@@ -108,8 +108,11 @@ async def recover_search_form(
         response_status = None
         timed_out = False
         try:
+            # Earlier live runs timed out at DOMContentLoaded before any
+            # document was committed. Commit is an earlier, observable milestone.
+            # Public DOM readiness is verified separately below.
             response = await page.goto(
-                route.url, wait_until="domcontentloaded", timeout=navigation_timeout_ms
+                route.url, wait_until="commit", timeout=navigation_timeout_ms
             )
             response_status = response.status if response else None
         except Exception as exc:
@@ -165,6 +168,23 @@ async def recover_search_form(
                                  "reason_code": "STALE_DOCUMENT_AFTER_TIMEOUT", "timed_out": True,
                                  "recommended_action": "TRY_NEXT_OFFICIAL_ROUTE"})
             continue
+
+        # A successful document commit may precede PRADO/AJAX rendering. Wait
+        # only for public markers, without clicking, resubmitting or retrying.
+        # Stub pages used in offline unit tests have no wait_for_function method.
+        if not timed_out and response_status is not None and response_status < 400:
+            public_wait = getattr(page, "wait_for_function", None)
+            if public_wait is not None:
+                try:
+                    await public_wait("""() =>
+                        !!document.querySelector('#ctl0_CONTENU_PAGE_AdvancedSearch_categorie')
+                        || !!document.querySelector('.tender_item')
+                        || /Nombre de r[eé]sultats/i.test(document.body?.innerText || '')
+                    """, timeout=9000)
+                except Exception:
+                    # Missing DOM readiness is not proof of an empty source; the
+                    # classifier below still fails closed if evidence is absent.
+                    pass
 
         observed = await _observe(page, status=response_status, timed_out=timed_out)
         state = observed["state"]
