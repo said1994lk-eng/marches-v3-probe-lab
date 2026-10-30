@@ -11,6 +11,7 @@ from typing import Any, Sequence
 from urllib.parse import parse_qs, urlparse
 
 from page_state import classify_playwright_page
+from navigation_destination import classify_destination, is_benign_official_redirect
 
 ALLOWED_HOST = "www.marchespublics.gov.ma"
 SEARCH_PAGE = "entreprise.EntrepriseAdvancedSearch"
@@ -123,8 +124,20 @@ async def recover_search_form(
         # Prevent following a redirect to another host / private path.
         landed_url = getattr(page, "url", "")
         if landed_url and not is_allowed_search_url(landed_url):
+            destination_class = classify_destination(landed_url)
+            if is_benign_official_redirect(destination_class):
+                # The portal may route to its own public home or a different
+                # advanced-search URL. That DOM is NOT evidence of an accepted
+                # form for the attempted route. One other *already-approved*
+                # URL may be tried, but never loop or follow arbitrary links.
+                observations.append({"route_id": route.id, "state": "UNKNOWN_LAYOUT",
+                                     "reason_code": "OFFICIAL_REDIRECT_TO_OTHER_ROUTE",
+                                     "destination_class": destination_class,
+                                     "recommended_action": "TRY_NEXT_OFFICIAL_ROUTE"})
+                continue
             observations.append({"route_id": route.id, "state": "ERROR_PAGE",
-                                 "reason_code": "UNEXPECTED_NAVIGATION_DESTINATION"})
+                                 "reason_code": "UNEXPECTED_NAVIGATION_DESTINATION",
+                                 "destination_class": destination_class})
             return RecoveryResult(False, "UNEXPECTED_NAVIGATION_DESTINATION", None, tuple(observations))
 
         # A timed-out goto can leave the *previous route's* DOM visible.
