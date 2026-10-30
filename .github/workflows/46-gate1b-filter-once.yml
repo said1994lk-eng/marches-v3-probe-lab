@@ -1,4 +1,5 @@
 name: "46 - Gate 1B Fournitures Filter Evidence (single bounded run)"
+# Run after Gate 1B offline prerequisite 165/165 passed on the current HEAD.
 on:
   push:
     paths:
