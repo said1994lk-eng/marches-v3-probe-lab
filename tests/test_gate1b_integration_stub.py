@@ -96,7 +96,7 @@ class IntegrationTests(unittest.TestCase):
     def test_ajax_post_happy_path_one_click_only(self):
         page = FakePage()
         result = asyncio.run(run_gate_1b(page, None))
-        self.assertEqual(result["status"], "SAMPLED_CONFIRMED")
+        self.assertEqual(result["status"], "SAMPLED_CONFIRMED", msg=str(result))
         self.assertEqual(result["postback_kind"], "AJAX_POST")
         self.assertEqual(result["postback_http_status"], 200)
         self.assertEqual(result["postback_state"], "APPLIED")
