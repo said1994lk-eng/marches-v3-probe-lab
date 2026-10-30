@@ -62,6 +62,13 @@ class FakePage:
         self.clicks = 0
         self.token = "initial-prado-form-state-token-" * 3
 
+    def locator(self, selector):
+        if "AdvancedSearch_categorie" in selector:
+            return FakeCategory(self)
+        if "lancerRecherche" in selector:
+            return FakeButton(self)
+        raise AssertionError("Unexpected selector in offline stub")
+
     def on(self, event, callback):
         self.listeners.setdefault(event, []).append(callback)
 
