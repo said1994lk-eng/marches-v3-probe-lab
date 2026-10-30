@@ -1,0 +1,79 @@
+name: "41 - Gate 1A-04 Category Evidence (single bounded public check)"
+on:
+  push:
+    paths:
+      - ".github/workflows/41-gate1a04-single.yml"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: gate1a04-one-bounded-check
+  cancel-in-progress: false
+
+jobs:
+  gate1a04:
+    runs-on: ubuntu-latest
+    timeout-minutes: 6
+    steps:
+      - name: Checkout without credential persistence
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Run all offline tests before any network request
+        run: |
+          python -m py_compile src/category_evidence.py src/filter_evidence_gate1a04.py src/gate1a04_probe.py
+          python -m unittest discover -s tests -q
+
+      - name: Install bounded browser runner
+        run: |
+          python -m pip install -r requirements.txt
+          python -m playwright install --with-deps chromium
+
+      - name: Exactly one live, read-only public category sample
+        env:
+          ENABLE_LIVE_GATE1A04: "1"
+          PYTHONUNBUFFERED: "1"
+        shell: bash
+        run: |
+          mkdir -p artifacts
+          set -o pipefail
+          python src/gate1a04_probe.py 2>&1 | tee artifacts/gate1a04_console.log
+
+      - name: Save only sanitized report even on failure
+        if: always()
+        run: |
+          mkdir -p artifacts
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          log = Path("artifacts/gate1a04_console.log")
+          data = log.read_text(encoding="utf-8", errors="replace") if log.exists() else ""
+          start, finish = "BEGIN_GATE1A04_JSON", "END_GATE1A04_JSON"
+          if start in data and finish in data.split(start, 1)[1]:
+              raw = data.split(start, 1)[1].split(finish, 1)[0].strip()
+              try:
+                  output = json.loads(raw)
+              except json.JSONDecodeError:
+                  output = {"schema": "gate1a04-workflow/1", "status": "INVALID_JSON"}
+          else:
+              output = {"schema": "gate1a04-workflow/1", "status": "NO_PROBE_JSON"}
+          Path("artifacts/gate1a04-report.json").write_text(
+              json.dumps(output, indent=2, ensure_ascii=False) + "\n", encoding="utf-8"
+          )
+          PY
+
+      - name: Upload run evidence artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: gate1a04-sanitized-category-report
+          path: artifacts/gate1a04-report.json
+          if-no-files-found: error
+          retention-days: 3
