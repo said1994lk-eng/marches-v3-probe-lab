@@ -1,0 +1,24 @@
+name: "47 - Gate 1B Offline Regression Diagnosis"
+on:
+  push:
+    paths:
+      - ".github/workflows/47-gate1b-offline-debug.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  tests:
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Offline Python regression diagnostics (NO external portal)
+        run: |
+          python -m py_compile src/gate1b_attestation.py src/gate1b_probe.py
+          python -m unittest discover -s tests -v
