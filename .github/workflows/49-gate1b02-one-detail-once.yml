@@ -1,0 +1,77 @@
+name: "49 - Gate 1B-02 One Public Detail Category Spot Check"
+on:
+  push:
+    paths:
+      - ".github/workflows/49-gate1b02-one-detail-once.yml"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: gate1b02-single-public-evidence-session
+  cancel-in-progress: false
+
+jobs:
+  evidence:
+    runs-on: ubuntu-latest
+    timeout-minutes: 7
+    steps:
+      - name: Checkout without persistent credentials
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Verify complete offline test suite before network
+        run: |
+          python -m py_compile src/gate1b_attestation.py src/gate1b02_dom_evidence.py src/gate1b02_probe.py
+          python -m unittest discover -s tests -q
+      - name: Install Chromium
+        run: |
+          python -m pip install -r requirements.txt
+          python -m playwright install --with-deps chromium
+      - name: Test actual DOM evidence Javascript on local HTML only
+        run: |
+          python tests/gate1b02_browser_fixture.py
+      - name: Exactly one public search with one detail GET maximum
+        shell: bash
+        env:
+          ENABLE_LIVE_GATE1B02: "1"
+          PYTHONUNBUFFERED: "1"
+        run: |
+          set -o pipefail
+          mkdir -p artifacts
+          python src/gate1b02_probe.py 2>&1 | tee artifacts/gate1b02_console.log
+      - name: Preserve sanitized JSON even when probe fails
+        if: always()
+        run: |
+          mkdir -p artifacts
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          p=Path("artifacts/gate1b02_console.log")
+          s=p.read_text(encoding="utf-8", errors="replace") if p.exists() else ""
+          begin,end="BEGIN_GATE1B02_JSON","END_GATE1B02_JSON"
+          if begin in s and end in s.split(begin,1)[1]:
+              raw=s.split(begin,1)[1].split(end,1)[0].strip()
+              try:
+                  result=json.loads(raw)
+              except (ValueError,IndexError):
+                  result={"schema":"gate1b02-wrapper/1","status":"INVALID_JSON"}
+          else:
+              result={"schema":"gate1b02-wrapper/1","status":"PROBE_JSON_NOT_EMITTED"}
+          Path("artifacts/gate1b02-report.json").write_text(
+              json.dumps(result,ensure_ascii=False,indent=2)+"\n",
+              encoding="utf-8"
+          )
+          PY
+      - name: Upload only sanitized report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: gate1b02-one-detail-sanitized-evidence
+          path: artifacts/gate1b02-report.json
+          retention-days: 3
+          if-no-files-found: error
