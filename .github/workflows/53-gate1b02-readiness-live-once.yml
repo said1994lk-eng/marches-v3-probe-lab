@@ -1,0 +1,75 @@
+name: "53 - Gate 1B-02 Corrected Readiness (one public detail)"
+on:
+  push:
+    paths:
+      - ".github/workflows/53-gate1b02-readiness-live-once.yml"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: gate1b02-one-readiness-live-session
+  cancel-in-progress: false
+
+jobs:
+  evidence:
+    runs-on: ubuntu-latest
+    timeout-minutes: 7
+    steps:
+      - name: Checkout without persistent credentials
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Verify all offline tests before any portal traffic
+        run: |
+          python -m py_compile src/gate1b_attestation.py src/gate1b02_dom_evidence.py src/gate1b02_detail_parser.py src/gate1b02_detail_readiness.py src/gate1b02_probe.py
+          python -m unittest discover -s tests -q
+      - name: Install Chromium
+        run: |
+          python -m pip install -r requirements.txt
+          python -m playwright install --with-deps chromium
+      - name: Verify strict category parsing on local fixture
+        run: python tests/gate1b02_browser_fixture.py
+      - name: Verify late field readiness on local fixture
+        run: python tests/gate1b02_readiness_browser_fixture.py
+      - name: Run exactly one bounded live public search and detail check
+        shell: bash
+        env:
+          ENABLE_LIVE_GATE1B02: "1"
+          PYTHONUNBUFFERED: "1"
+        run: |
+          mkdir -p artifacts
+          set -o pipefail
+          python src/gate1b02_probe.py 2>&1 | tee artifacts/gate1b02_console.log
+      - name: Preserve sanitized JSON irrespective of outcome
+        if: always()
+        run: |
+          mkdir -p artifacts
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          p=Path("artifacts/gate1b02_console.log")
+          s=p.read_text(encoding="utf-8",errors="replace") if p.exists() else ""
+          a,b="BEGIN_GATE1B02_JSON","END_GATE1B02_JSON"
+          if a in s and b in s.split(a,1)[1]:
+              try:
+                  report=json.loads(s.split(a,1)[1].split(b,1)[0].strip())
+              except (ValueError,IndexError):
+                  report={"schema":"gate1b02-live-wrapper/1","status":"INVALID_JSON"}
+          else:
+              report={"schema":"gate1b02-live-wrapper/1","status":"PROBE_JSON_NOT_EMITTED"}
+          Path("artifacts/gate1b02-readiness-report.json").write_text(
+              json.dumps(report,ensure_ascii=False,indent=2)+"\n",encoding="utf-8")
+          PY
+      - name: Upload sanitized proof only
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: gate1b02-corrected-readiness-one-detail-report
+          path: artifacts/gate1b02-readiness-report.json
+          retention-days: 3
+          if-no-files-found: error
