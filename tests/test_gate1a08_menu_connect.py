@@ -9,7 +9,7 @@ sys.path.insert(0,str(Path(__file__).resolve().parents[1]/"src"))
 from gate1a08_menu_connect import (
     ADVANCED, HOME, CATEGORY_DOM_JS, HOME_READY_JS, SAFE_DOM_JS, blank_report, failure_reason,
     official_public_url, look_for_form, open_home_menu, run,
-    run_with_page, trusted_advanced_link,
+    run_with_page, trusted_advanced_link, trusted_public_menu_link,
 )
 
 
@@ -76,6 +76,10 @@ class FakePage:
             if self.fail_direct:
                 raise TimeoutError("hidden direct URL")
             self.url=ADVANCED
+            self.form_ready=True
+            return Response(self.direct_status)
+        if trusted_public_menu_link(url,url) is not None:
+            self.url=url
             self.form_ready=True
             return Response(self.direct_status)
         raise AssertionError("unsafe goto URL")
@@ -158,6 +162,18 @@ class TestPolicy(unittest.TestCase):
         ]:
             self.assertIsNone(trusted_advanced_link(raw,HOME))
 
+    def test_other_official_search_href_is_safe_to_follow(self):
+        uri="https://www.marchespublics.gov.ma/index.php?page=entreprise.EntrepriseConsultationsEnCours&AllCons"
+        self.assertEqual(trusted_public_menu_link(uri,HOME),uri)
+
+    def test_protected_public_menu_link_does_not_open(self):
+        root="https://www.marchespublics.gov.ma/index.php?page="
+        for tail in ["entreprise.EntrepriseDetailsConsultation&refConsultation=7",
+                     "entreprise.EntrepriseConsultationsEnCours&download=1",
+                     "entreprise.EntrepriseAuthentication",
+                     "entreprise.EntrepriseConsultationsEnCours&token=secret"]:
+            self.assertIsNone(trusted_public_menu_link(root+tail,HOME))
+
     def test_blank_report_does_not_claim_filter_or_storage(self):
         d=blank_report()
         self.assertFalse(d["category_confirmed"])
@@ -207,6 +223,18 @@ class TestMenu(unittest.TestCase):
         self.assertEqual(len(p.goto_calls),2)
         self.assertEqual(result["direct_get_attempts"],0)
         self.assertEqual(result["search_clicks"],0)
+
+    def test_public_consultations_menu_href_reaches_real_form(self):
+        menu_url=("https://www.marchespublics.gov.ma/index.php?"
+                  "page=entreprise.EntrepriseConsultationsEnCours&AllCons")
+        p=FakePage(consultations_href=menu_url)
+        result=asyncio.run(run_with_page(p))
+        self.assertEqual(result["status"],"FORM_READY_CONFIRMED_ONCE",result)
+        self.assertTrue(result["menu"]["consultations_opened_via_link"])
+        self.assertEqual(result["menu"]["link_class"],"OFFICIAL_OTHER_PUBLIC_SEARCH_HREF")
+        self.assertEqual(result["direct_get_attempts"],0)
+        self.assertEqual(len(p.goto_calls),2)
+        self.assertEqual(p.clicks,["menu"])
 
     def test_unapproved_link_fails_closed(self):
         p=FakePage(consultations_href="https://example.com/other")
