@@ -16,7 +16,7 @@ import os
 import re
 import time
 from datetime import datetime, timezone
-from urllib.parse import parse_qs, urlparse
+from urllib.parse import parse_qs, urlparse, urljoin
 from typing import Any
 
 from navigation_destination import classify_destination
@@ -58,6 +58,27 @@ def official_public_url(url: str, *, navigation: bool = False) -> bool:
         return False
 
 
+def trusted_advanced_link(raw: object, base: str) -> str | None:
+    """Use the portal's actual public search href without exporting the URL."""
+    if not isinstance(raw, str) or not raw or len(raw) > 1800:
+        return None
+    try:
+        url=urljoin(base,raw)
+        parsed=urlparse(url)
+        if not official_public_url(url, navigation=True):
+            return None
+        if classify_destination(url) != "OFFICIAL_ADVANCED_SEARCH_ROUTE":
+            return None
+        qs=parse_qs(parsed.query, keep_blank_values=True)
+        forbidden=("download","dce","document","file","auth","token",
+                   "action","logout","captcha","redirect","connexion")
+        if any(any(x in k.casefold() for x in forbidden) for k in qs):
+            return None
+        return url
+    except (TypeError, ValueError):
+        return None
+
+
 def failure_reason(exc: Exception) -> str:
     name = type(exc).__name__
     if name in {"TimeoutError", "PlaywrightTimeoutError"}:
@@ -74,7 +95,9 @@ def blank_report() -> dict:
         "status": "LIVE_DISABLED",
         "mode": "PUBLIC_READONLY_NO_FILTER_NO_DCE_NO_DB",
         "home_navigation": None,
-        "menu": {"opened": False, "consultations_clicked": False, "error": None,
+        "menu": {"opened": False, "consultations_clicked": False,
+                 "consultations_opened_via_link": False,
+                 "link_class": None, "error": None,
                  "destination_after_click": None},
         "direct_fallback": None,
         "search_form": {"form_ready": False, "source": None, "reason": None},
@@ -154,8 +177,27 @@ async def open_home_menu(page: Any, output: dict) -> tuple[bool, bool]:
 
     try:
         consultations = page.get_by_role("link", name=re.compile("Consultations en cours", re.I))
-        await consultations.click(timeout=23000)
-        output["menu"]["consultations_clicked"] = True
+        # Wait for a real visible link independently of its full-load event.
+        await consultations.wait_for(state="visible", timeout=23000)
+        raw_href = await consultations.get_attribute("href")
+        direct_menu_url = trusted_advanced_link(raw_href, page.url)
+        if direct_menu_url is not None:
+            output["menu"]["link_class"] = "OFFICIAL_ADVANCED_SEARCH_HREF"
+            # Avoid locator.click waiting for the full load event. This is
+            # the official menu's own public GET URL, not a guessed endpoint.
+            resp = await page.goto(direct_menu_url, wait_until="commit", timeout=35000)
+            output["menu"]["consultations_opened_via_link"] = True
+            if resp and resp.status >= 400:
+                output["status"] = "MENU_LINK_HTTP_ERROR"
+                return False, False
+        elif not raw_href or raw_href.lstrip().lower().startswith(("javascript:", "#")):
+            output["menu"]["link_class"] = "DYNAMIC_MENU_LINK"
+            await consultations.click(timeout=23000)
+            output["menu"]["consultations_clicked"] = True
+        else:
+            output["menu"]["link_class"] = "UNAPPROVED_MENU_HREF"
+            output["status"] = "UNAPPROVED_MENU_LINK"
+            return False, False
     except Exception as exc:
         output["menu"]["error"] = "CONSULTATIONS_CLICK_" + failure_reason(exc)
         output["menu"]["destination_after_click"] = classify_destination(getattr(page, "url", ""))
@@ -175,7 +217,9 @@ async def open_home_menu(page: Any, output: dict) -> tuple[bool, bool]:
     output["search_form"].update(form_ready=ready, source="home_menu" if ready else None, reason=reason)
     if ready:
         output["status"] = "FORM_READY_CONFIRMED_ONCE"
-    return ready, not ready
+    # If the menu's actual advanced-search URL was already loaded, do not
+    # hit the same public endpoint again through a guessed fallback URL.
+    return ready, (not ready and not output["menu"]["consultations_opened_via_link"])
 
 
 async def run_with_page(page: Any, *, allow_fallback: bool = True) -> dict:
