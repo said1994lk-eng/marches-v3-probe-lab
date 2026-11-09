@@ -1,5 +1,6 @@
 name: "55 - Gate 1A-08 Home-Menu FORM_READY Canary (one live test)"
 # Compatible browser runner. Prior attempt could not install on ubuntu26.04.
+# 2026-11-09: allow trusted official PRADO intermediate requests (one diagnostic run).
 on:
   push:
     paths:
