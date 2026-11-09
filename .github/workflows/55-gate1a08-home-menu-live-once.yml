@@ -1,0 +1,69 @@
+name: "55 - Gate 1A-08 Home-Menu FORM_READY Canary (one live test)"
+on:
+  push:
+    paths:
+      - ".github/workflows/55-gate1a08-home-menu-live-once.yml"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: gate1a08-home-menu-one-official-entry
+  cancel-in-progress: false
+
+jobs:
+  connection:
+    runs-on: ubuntu-latest
+    timeout-minutes: 6
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Verify all offline tests before portal request
+        run: |
+          python -m py_compile src/gate1a08_menu_connect.py
+          python -m unittest discover -s tests -q
+      - name: Install Chromium
+        run: |
+          python -m pip install -r requirements.txt
+          python -m playwright install --with-deps chromium
+      - name: Run one read-only official home-menu connection with bounded fallback
+        shell: bash
+        env:
+          ENABLE_LIVE_GATE1A08: "1"
+          PYTHONUNBUFFERED: "1"
+        run: |
+          mkdir -p artifacts
+          set -o pipefail
+          python src/gate1a08_menu_connect.py 2>&1 | tee artifacts/gate1a08-console.log
+      - name: Save only sanitized status JSON on success or failure
+        if: always()
+        run: |
+          mkdir -p artifacts
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          p=Path("artifacts/gate1a08-console.log")
+          s=p.read_text(encoding="utf-8",errors="replace") if p.exists() else ""
+          a,b="BEGIN_GATE1A08_JSON","END_GATE1A08_JSON"
+          if a in s and b in s.split(a,1)[1]:
+              try:
+                  result=json.loads(s.split(a,1)[1].split(b,1)[0].strip())
+              except (ValueError,IndexError):
+                  result={"schema":"gate1a08-wrapper/1","status":"INVALID_JSON"}
+          else:
+              result={"schema":"gate1a08-wrapper/1","status":"PROBE_JSON_NOT_EMITTED"}
+          Path("artifacts/gate1a08-public-form-evidence.json").write_text(
+              json.dumps(result,ensure_ascii=False,indent=2)+"\n",encoding="utf-8")
+          PY
+      - name: Upload sanitized evidence only
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: gate1a08-home-menu-form-evidence
+          path: artifacts/gate1a08-public-form-evidence.json
+          retention-days: 3
+          if-no-files-found: error
