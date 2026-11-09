@@ -1,0 +1,26 @@
+name: "54 - Gate 1A-08 Home-Menu Connectivity Offline"
+on:
+  push:
+    paths:
+      - ".github/workflows/54-gate1a08-home-menu-offline.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  offline:
+    runs-on: ubuntu-latest
+    timeout-minutes: 4
+    steps:
+      - name: Checkout without persistent credentials
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Compile new connection module and run full offline tests
+        run: |
+          python -m py_compile src/gate1a08_menu_connect.py
+          python -m unittest discover -s tests -q
