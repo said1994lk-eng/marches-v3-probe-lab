@@ -1,0 +1,67 @@
+name: "58 - Gate 1B-02 Verify Fournitures (manual, one detail)"
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: gate1b02-verified-link-one-detail-manual
+  cancel-in-progress: false
+
+jobs:
+  check:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 7
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Validate regressions first
+        run: |
+          python -m py_compile src/gate1a09_exact_public_search.py src/gate1b_attestation.py src/gate1b02_probe.py
+          python -m unittest discover -s tests -q
+      - name: Install browser
+        run: |
+          python -m pip install -r requirements.txt
+          python -m playwright install chromium
+      - name: Bounded public Fournitures search and one detail maximum
+        shell: bash
+        env:
+          ENABLE_LIVE_GATE1B02: "1"
+          PYTHONUNBUFFERED: "1"
+        run: |
+          mkdir -p artifacts
+          set -o pipefail
+          python src/gate1b02_probe.py 2>&1 | tee artifacts/gate1b02-console.log
+      - name: Preserve sanitized source evidence even when unconfirmed
+        if: always()
+        run: |
+          mkdir -p artifacts
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          p=Path("artifacts/gate1b02-console.log")
+          s=p.read_text(encoding="utf-8",errors="replace") if p.exists() else ""
+          a,b="BEGIN_GATE1B02_JSON","END_GATE1B02_JSON"
+          if a in s and b in s.split(a,1)[1]:
+              try:
+                  report=json.loads(s.split(a,1)[1].split(b,1)[0].strip())
+              except (ValueError,IndexError):
+                  report={"schema":"gate1b02-wrapper/1","status":"INVALID_JSON"}
+          else:
+              report={"schema":"gate1b02-wrapper/1","status":"PROBE_JSON_NOT_EMITTED"}
+          Path("artifacts/gate1b02-official-filter-proof.json").write_text(
+              json.dumps(report,ensure_ascii=False,indent=2)+"\n",encoding="utf-8")
+          PY
+      - name: Upload sanitized JSON
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: gate1b02-verified-entry-category-proof
+          path: artifacts/gate1b02-official-filter-proof.json
+          retention-days: 3
+          if-no-files-found: error
