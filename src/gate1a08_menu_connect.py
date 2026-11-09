@@ -34,8 +34,10 @@ BLOCKING_CLASSES = {"UNTRUSTED_DESTINATION", "OFFICIAL_AUTH_WALL",
                     "UNRECOGNIZED_OFFICIAL_PAGE", "BROWSER_ERROR_DOCUMENT"}
 CATEGORY_DOM_JS = r"""() => {
   const select=document.querySelector('#ctl0_CONTENU_PAGE_AdvancedSearch_categorie');
+  const search=document.querySelector('#ctl0_CONTENU_PAGE_AdvancedSearch_lancerRecherche');
   const options=select ? [...select.options].map(o=>(o.textContent||'').trim().toLowerCase()):[];
-  return !!select && options.some(s=>s==='fournitures');
+  return !!select && !!search && !search.disabled &&
+    options.some(s=>s==='fournitures');
 }"""
 
 HOME_READY_JS = r"""() => !!document.body &&
@@ -122,6 +124,39 @@ def trusted_advanced_link(raw: object, base: str) -> str | None:
         return None
 
 
+def trusted_public_menu_link(raw: object, base: str) -> str | None:
+    """Accept only safe public consultation/search routes from visible menu."""
+    if not isinstance(raw,str) or not raw or len(raw)>1800:
+        return None
+    try:
+        url=urljoin(base,raw)
+        p=urlparse(url)
+        if not official_public_url(url):
+            return None
+        if p.path not in ("/","/index.php") or p.fragment:
+            return None
+        params=parse_qs(p.query,keep_blank_values=True)
+        pages=params.get("page")
+        if not pages or len(pages)!=1:
+            return None
+        name=pages[0]
+        if not re.fullmatch(r"entreprise\.[A-Za-z][A-Za-z0-9_]{2,85}",name):
+            return None
+        lower=name.casefold()
+        if not any(word in lower for word in ("search","recherche","consultation","annonce")):
+            return None
+        prohibited=("auth","login","connexion","identif","captcha","download",
+                    "dce","document","retrait","detail","soumission","logout",
+                    "file","token","redirect","action","refconsultation")
+        if any(x in lower for x in prohibited):
+            return None
+        if any(any(x in k.casefold() for x in prohibited) for k in params):
+            return None
+        return url
+    except (ValueError,TypeError):
+        return None
+
+
 def failure_reason(exc: Exception) -> str:
     name = type(exc).__name__
     if name in {"TimeoutError", "PlaywrightTimeoutError"}:
@@ -161,11 +196,13 @@ def blank_report() -> dict:
     }
 
 
-async def look_for_form(page: Any, *, timeout_ms: int = 22000) -> tuple[bool, str]:
+async def look_for_form(page: Any, *, timeout_ms: int = 22000,
+                        allow_public_menu_route: bool = False) -> tuple[bool, str]:
     if not 1000 <= timeout_ms <= 30000:
         raise ValueError("INVALID_WAIT")
     if classify_destination(page.url) != "OFFICIAL_ADVANCED_SEARCH_ROUTE":
-        return False, "NOT_ADVANCED_SEARCH_ROUTE"
+        if not allow_public_menu_route or trusted_public_menu_link(page.url,page.url) is None:
+            return False, "NOT_ADVANCED_SEARCH_ROUTE"
     try:
         await page.wait_for_function(CATEGORY_DOM_JS, timeout=timeout_ms, polling=250)
     except Exception:
@@ -237,8 +274,14 @@ async def open_home_menu(page: Any, output: dict) -> tuple[bool, bool]:
         await consultations.wait_for(state="visible", timeout=23000)
         raw_href = await consultations.get_attribute("href")
         direct_menu_url = trusted_advanced_link(raw_href, page.url)
+        if direct_menu_url is None:
+            direct_menu_url = trusted_public_menu_link(raw_href, page.url)
         if direct_menu_url is not None:
-            output["menu"]["link_class"] = "OFFICIAL_ADVANCED_SEARCH_HREF"
+            output["menu"]["link_class"] = (
+                "OFFICIAL_ADVANCED_SEARCH_HREF"
+                if classify_destination(direct_menu_url)=="OFFICIAL_ADVANCED_SEARCH_ROUTE"
+                else "OFFICIAL_OTHER_PUBLIC_SEARCH_HREF"
+            )
             # Avoid locator.click waiting for the full load event. This is
             # the official menu's own public GET URL, not a guessed endpoint.
             resp = await page.goto(direct_menu_url, wait_until="commit", timeout=35000)
@@ -270,10 +313,11 @@ async def open_home_menu(page: Any, output: dict) -> tuple[bool, bool]:
         return False, True
 
     output["menu"]["destination_after_click"] = classify_destination(getattr(page, "url", ""))
-    if output["menu"]["destination_after_click"] in BLOCKING_CLASSES:
+    if output["menu"]["destination_after_click"] in BLOCKING_CLASSES and (
+            trusted_public_menu_link(page.url,page.url) is None):
         output["status"] = "UNAPPROVED_MENU_DESTINATION"
         return False, False
-    ready, reason = await look_for_form(page)
+    ready, reason = await look_for_form(page,allow_public_menu_route=True)
     output["search_form"].update(form_ready=ready, source="home_menu" if ready else None, reason=reason)
     if ready:
         output["status"] = "FORM_READY_CONFIRMED_ONCE"
