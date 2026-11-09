@@ -15,13 +15,9 @@ from gate1b02_dom_evidence import (
     inspect_card_structure, inspect_one_public_detail, one_detail_link,
     decide_detail_proof,
 )
-from navigation_recovery import Route, recover_search_form
+from navigation_recovery import recover_search_form
+from gate1a09_exact_public_search import ROUTES
 
-OFFICIAL = "https://www.marchespublics.gov.ma"
-ROUTES = (
-    Route("official_primary", OFFICIAL + "/?page=entreprise.EntrepriseAdvancedSearch&AllCons&searchAnnCons"),
-    Route("official_secondary", OFFICIAL + "/index.php?page=entreprise.EntrepriseAdvancedSearch&AllCons&EnCours&searchAnnCons"),
-)
 
 
 def blank_report() -> dict:
@@ -55,7 +51,7 @@ async def run() -> dict:
                 context = await browser.new_context(locale="fr-FR", accept_downloads=False)
                 page = await context.new_page()
                 nav = await recover_search_form(
-                    page, ROUTES, navigation_timeout_ms=17000, settle_wait_ms=800
+                    page, ROUTES, navigation_timeout_ms=35000, settle_wait_ms=1200
                 )
                 report["navigation"] = nav.as_report()
                 if not nav.form_ready:
