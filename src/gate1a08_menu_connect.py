@@ -38,6 +38,49 @@ CATEGORY_DOM_JS = r"""() => {
   return !!select && options.some(s=>s==='fournitures');
 }"""
 
+HOME_READY_JS = r"""() => !!document.body &&
+  ['interactive','complete'].includes(document.readyState)"""
+
+SAFE_DOM_JS = r"""() => {
+  const text=(document.body?.innerText || '').trim();
+  const links=[...document.querySelectorAll('a')].filter(a=>
+    /consultations\s+en\s+cours/i.test((a.textContent||'').trim()));
+  const isVisible=e=>!!(e.getClientRects().length) &&
+    getComputedStyle(e).visibility!=='hidden';
+  return {ready_state:document.readyState,
+    body_text_bucket:text.length===0?'ZERO':text.length<100?'SHORT':
+                     text.length<1000?'MEDIUM':'LONG',
+    annonces_present:!!document.querySelector('#Annoces'),
+    consultations_links_dom:Math.min(10,links.length),
+    consultations_links_visible:Math.min(10,links.filter(isVisible).length),
+    category_present:!!document.querySelector('#ctl0_CONTENU_PAGE_AdvancedSearch_categorie'),
+    result_cards:Math.min(100,document.querySelectorAll('.tender_item').length)};
+}"""
+
+
+async def safe_dom_summary(page: Any) -> dict:
+    try:
+        v=await page.evaluate(SAFE_DOM_JS)
+    except Exception:
+        v={}
+    if not isinstance(v,dict):
+        v={}
+    def number(key):
+        x=v.get(key)
+        return min(100,max(0,x)) if type(x) is int else 0
+    return {
+        "ready_state":v.get("ready_state") if v.get("ready_state") in
+            {"loading","interactive","complete"} else "UNKNOWN",
+        "body_text_bucket":v.get("body_text_bucket") if v.get("body_text_bucket") in
+            {"ZERO","SHORT","MEDIUM","LONG"} else "UNKNOWN",
+        "annonces_present":v.get("annonces_present") is True,
+        "consultations_links_dom":number("consultations_links_dom"),
+        "consultations_links_visible":number("consultations_links_visible"),
+        "category_present":v.get("category_present") is True,
+        "result_cards":number("result_cards"),
+    }
+
+
 
 def official_public_url(url: str, *, navigation: bool = False) -> bool:
     try:
@@ -95,12 +138,15 @@ def blank_report() -> dict:
         "status": "LIVE_DISABLED",
         "mode": "PUBLIC_READONLY_NO_FILTER_NO_DCE_NO_DB",
         "home_navigation": None,
+        "home_dom_ready": False,
         "menu": {"opened": False, "consultations_clicked": False,
                  "consultations_opened_via_link": False,
                  "link_class": None, "error": None,
-                 "destination_after_click": None},
+                 "destination_after_click": None,
+                 "after_menu_dom": None},
         "direct_fallback": None,
-        "search_form": {"form_ready": False, "source": None, "reason": None},
+        "search_form": {"form_ready": False, "source": None, "reason": None,
+                        "last_dom": None},
         "navigation_responses": [],
         "outbound_blocked_requests": 0,
         "outbound_blocked_navigations": 0,
@@ -161,6 +207,15 @@ async def open_home_menu(page: Any, output: dict) -> tuple[bool, bool]:
     if info["destination_class"] not in NAV_STATES:
         output["status"] = "HOME_NOT_PUBLIC_PORTAL_ROUTE"
         return False, False
+    # commit confirms response headers, not a hydrated menu. Require the
+    # parser to finish before interacting with PRADO's navigation widget.
+    try:
+        await page.wait_for_function(HOME_READY_JS, timeout=18000, polling=200)
+        output["home_dom_ready"] = True
+    except Exception:
+        output["menu"]["error"] = "HOME_DOM_NOT_PARSED"
+        output["menu"]["after_menu_dom"] = await safe_dom_summary(page)
+        return False, True
     try:
         await page.wait_for_selector("#Annoces", state="visible", timeout=18000)
     except Exception:
@@ -171,6 +226,7 @@ async def open_home_menu(page: Any, output: dict) -> tuple[bool, bool]:
         # navigation controls, and do not use expect_navigation for PRADO AJAX.
         await page.locator("#Annoces").click(timeout=15000)
         output["menu"]["opened"] = True
+        output["menu"]["after_menu_dom"] = await safe_dom_summary(page)
     except Exception as exc:
         output["menu"]["error"] = "ANNOCES_MENU_CLICK_" + failure_reason(exc)
         return False, True
@@ -204,6 +260,7 @@ async def open_home_menu(page: Any, output: dict) -> tuple[bool, bool]:
     except Exception as exc:
         output["menu"]["error"] = "CONSULTATIONS_CLICK_" + failure_reason(exc)
         output["menu"]["destination_after_click"] = classify_destination(getattr(page, "url", ""))
+        output["menu"]["after_menu_dom"] = await safe_dom_summary(page)
         # A navigation might have occurred even if the click timed out. Check
         # the current trusted page once without a repeated click.
         if classify_destination(getattr(page, "url", "")) == "OFFICIAL_ADVANCED_SEARCH_ROUTE":
@@ -264,6 +321,8 @@ async def run_with_page(page: Any, *, allow_fallback: bool = True) -> dict:
         return report
     ready, reason = await look_for_form(page)
     report["search_form"].update(form_ready=ready, source="direct_fallback" if ready else None, reason=reason)
+    if not ready:
+        report["search_form"]["last_dom"] = await safe_dom_summary(page)
     report["status"] = "FORM_READY_CONFIRMED_ONCE" if ready else "FORM_NOT_CONFIRMED"
     return report
 
