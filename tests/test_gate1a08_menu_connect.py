@@ -7,7 +7,7 @@ from pathlib import Path
 
 sys.path.insert(0,str(Path(__file__).resolve().parents[1]/"src"))
 from gate1a08_menu_connect import (
-    ADVANCED, HOME, CATEGORY_DOM_JS, blank_report, failure_reason,
+    ADVANCED, HOME, CATEGORY_DOM_JS, HOME_READY_JS, SAFE_DOM_JS, blank_report, failure_reason,
     official_public_url, look_for_form, open_home_menu, run,
     run_with_page, trusted_advanced_link,
 )
@@ -97,11 +97,18 @@ class FakePage:
         return Clicker(self,"consultations")
 
     async def wait_for_function(self,js,*,timeout,polling):
+        if js==HOME_READY_JS:
+            return
         assert js==CATEGORY_DOM_JS
         if not self.form_ready:
             raise TimeoutError("form not found")
 
     async def evaluate(self,js):
+        if js==SAFE_DOM_JS:
+            return {"ready_state":"interactive","body_text_bucket":"MEDIUM",
+                    "annonces_present":True,"consultations_links_dom":1,
+                    "consultations_links_visible":1,"category_present":self.form_ready,
+                    "result_cards":0,"private_secret":"never export"}
         if self.form_ready:
             return {"category_control_found":True,"ready_state":"interactive","body_text_length":3000}
         return {"category_control_found":False,"ready_state":"loading","body_text_length":0,"body_html_length":0}
@@ -181,6 +188,9 @@ class TestMenu(unittest.TestCase):
         self.assertEqual(result["home_navigation"]["http_status"],200)
         self.assertEqual(result["direct_get_attempts"],0)
         self.assertEqual(result["home_get_attempts"],1)
+        self.assertTrue(result["home_dom_ready"])
+        self.assertEqual(result["menu"]["after_menu_dom"]["consultations_links_visible"],1)
+        self.assertNotIn("never export",str(result))
         self.assertEqual(p.clicks,["menu","consultations"])
         self.assertEqual(len(p.goto_calls),1)
         self.assertEqual(p.goto_calls[0][1],"commit")
