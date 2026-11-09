@@ -9,7 +9,7 @@ sys.path.insert(0,str(Path(__file__).resolve().parents[1]/"src"))
 from gate1a08_menu_connect import (
     ADVANCED, HOME, CATEGORY_DOM_JS, blank_report, failure_reason,
     official_public_url, look_for_form, open_home_menu, run,
-    run_with_page,
+    run_with_page, trusted_advanced_link,
 )
 
 
@@ -19,6 +19,15 @@ class Response:
 
 class Clicker:
     def __init__(self,page,kind):self.page=page;self.kind=kind
+
+    async def wait_for(self, *, state, timeout):
+        if self.page.fail_at=="consultations_not_visible":
+            raise TimeoutError("unavailable")
+        assert state=="visible"
+
+    async def get_attribute(self, name):
+        assert name=="href"
+        return self.page.consultations_href
 
     async def click(self,*,timeout):
         self.page.clicks.append(self.kind)
@@ -31,7 +40,8 @@ class Clicker:
 
 class FakePage:
     def __init__(self,*,fail_at=None,home_status=200,form_after_menu=True,
-                 fail_home=False,fail_direct=False,home_dest=HOME):
+                 fail_home=False,fail_direct=False,home_dest=HOME,
+                 consultations_href="javascript:void(0)"):
         self.url="about:blank"
         self.fail_at=fail_at
         self.home_status=home_status
@@ -39,6 +49,7 @@ class FakePage:
         self.fail_home=fail_home
         self.fail_direct=fail_direct
         self.home_dest=home_dest
+        self.consultations_href=consultations_href
         self.goto_calls=[]
         self.clicks=[]
         self.form_ready=False
@@ -118,6 +129,19 @@ class TestPolicy(unittest.TestCase):
         self.assertTrue(official_public_url(url))
         self.assertFalse(official_public_url(url,navigation=True))
 
+    def test_relative_official_menu_link_is_accepted_without_export(self):
+        raw="index.php?page=entreprise.EntrepriseAdvancedSearch&AllCons&EnCours"
+        url=trusted_advanced_link(raw,HOME)
+        self.assertEqual(url,"https://www.marchespublics.gov.ma/"+raw)
+
+    def test_external_and_download_menu_links_rejected(self):
+        for raw in [
+            "https://evil.example/index.php?page=entreprise.EntrepriseAdvancedSearch",
+            "index.php?page=entreprise.EntrepriseAdvancedSearch&download=1",
+            "index.php?page=entreprise.EntrepriseAdvancedSearch&auth_token=secret",
+        ]:
+            self.assertIsNone(trusted_advanced_link(raw,HOME))
+
     def test_blank_report_does_not_claim_filter_or_storage(self):
         d=blank_report()
         self.assertFalse(d["category_confirmed"])
@@ -152,6 +176,25 @@ class TestMenu(unittest.TestCase):
         self.assertEqual(len(p.goto_calls),1)
         self.assertEqual(p.goto_calls[0][1],"commit")
         self.assertFalse(result["category_confirmed"])
+
+    def test_real_menu_href_uses_commit_navigation_instead_of_click(self):
+        p=FakePage(consultations_href=ADVANCED)
+        result=asyncio.run(run_with_page(p))
+        self.assertEqual(result["status"],"FORM_READY_CONFIRMED_ONCE",result)
+        self.assertTrue(result["menu"]["consultations_opened_via_link"])
+        self.assertFalse(result["menu"]["consultations_clicked"])
+        self.assertEqual(result["menu"]["link_class"],"OFFICIAL_ADVANCED_SEARCH_HREF")
+        self.assertEqual(p.clicks,["menu"])
+        self.assertEqual(len(p.goto_calls),2)
+        self.assertEqual(result["direct_get_attempts"],0)
+        self.assertEqual(result["search_clicks"],0)
+
+    def test_unapproved_link_fails_closed(self):
+        p=FakePage(consultations_href="https://example.com/other")
+        result=asyncio.run(run_with_page(p))
+        self.assertEqual(result["status"],"UNAPPROVED_MENU_LINK")
+        self.assertEqual(result["direct_get_attempts"],0)
+        self.assertEqual(p.clicks,["menu"])
 
     def test_home_timeout_safe_direct_once(self):
         p=FakePage(fail_home=True)
