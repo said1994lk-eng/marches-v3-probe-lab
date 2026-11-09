@@ -79,6 +79,7 @@ def blank_report() -> dict:
         "search_form": {"form_ready": False, "source": None, "reason": None},
         "navigation_responses": [],
         "outbound_blocked_requests": 0,
+        "outbound_blocked_navigations": 0,
         "home_get_attempts": 0,
         "direct_get_attempts": 0,
         "search_clicks": 0,
@@ -233,12 +234,16 @@ async def run() -> dict:
                 # maroc-fournitures-bot browser connection.
                 async def only_official(route: Any) -> None:
                     request=route.request
-                    if (official_public_url(request.url) and
-                        (not request.is_navigation_request() or
-                         official_public_url(request.url, navigation=True))):
+                    # Successful production bot allows every official HTTPS
+                    # first-party resource. A legitimate PRADO intermediate
+                    # route must not be blocked before the search can render.
+                    # Unapproved destination is still rejected after navigation.
+                    if official_public_url(request.url):
                         await route.continue_()
                     else:
                         report["outbound_blocked_requests"] += 1
+                        if request.is_navigation_request():
+                            report["outbound_blocked_navigations"] += 1
                         await route.abort()
                 await context.route("**/*",only_official)
                 def on_response(response: Any) -> None:
@@ -255,6 +260,7 @@ async def run() -> dict:
                 observed=await run_with_page(page)
                 observed["navigation_responses"]=report["navigation_responses"]
                 observed["outbound_blocked_requests"]=report["outbound_blocked_requests"]
+                observed["outbound_blocked_navigations"]=report["outbound_blocked_navigations"]
                 return observed
             finally:
                 await browser.close()
