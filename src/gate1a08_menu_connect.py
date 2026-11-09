@@ -124,6 +124,25 @@ def trusted_advanced_link(raw: object, base: str) -> str | None:
         return None
 
 
+def public_menu_route_id(raw: object, base: str) -> str | None:
+    """Reveal only a validated public portal route name, never href/query."""
+    if not isinstance(raw,str) or not raw or len(raw)>1800:
+        return None
+    try:
+        absolute=urljoin(base,raw)
+        if not official_public_url(absolute):
+            return None
+        params=parse_qs(urlparse(absolute).query,keep_blank_values=True)
+        p=params.get("page")
+        if not p or len(p)!=1:
+            return "OFFICIAL_ROOT_OR_ASSET"
+        if re.fullmatch(r"entreprise\.[A-Za-z][A-Za-z0-9_]{2,85}",p[0]):
+            return p[0]
+    except (TypeError,ValueError):
+        return None
+    return None
+
+
 def trusted_public_menu_link(raw: object, base: str) -> str | None:
     """Accept only safe public consultation/search routes from visible menu."""
     if not isinstance(raw,str) or not raw or len(raw)>1800:
@@ -176,7 +195,7 @@ def blank_report() -> dict:
         "home_dom_ready": False,
         "menu": {"opened": False, "consultations_clicked": False,
                  "consultations_opened_via_link": False,
-                 "link_class": None, "error": None,
+                 "link_class": None, "link_route_id": None, "error": None,
                  "destination_after_click": None,
                  "after_menu_dom": None},
         "direct_fallback": None,
@@ -273,6 +292,7 @@ async def open_home_menu(page: Any, output: dict) -> tuple[bool, bool]:
         # Wait for a real visible link independently of its full-load event.
         await consultations.wait_for(state="visible", timeout=23000)
         raw_href = await consultations.get_attribute("href")
+        output["menu"]["link_route_id"] = public_menu_route_id(raw_href,page.url)
         direct_menu_url = trusted_advanced_link(raw_href, page.url)
         if direct_menu_url is None:
             direct_menu_url = trusted_public_menu_link(raw_href, page.url)
