@@ -1,0 +1,69 @@
+name: "56 - Gate 1A-09 Exact Public Consultations Link (one live test)"
+on:
+  push:
+    paths:
+      - ".github/workflows/56-gate1a09-exact-public-link-once.yml"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: gate1a09-official-menu-exact-one-readonly-run
+  cancel-in-progress: false
+
+jobs:
+  form:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 6
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: All offline regressions before source requests
+        run: |
+          python -m py_compile src/gate1a09_exact_public_search.py
+          python -m unittest discover -s tests -q
+      - name: Install Chromium on pinned Ubuntu runner
+        run: |
+          python -m pip install -r requirements.txt
+          python -m playwright install chromium
+      - name: One official public exact search-page link (one fallback max)
+        shell: bash
+        env:
+          ENABLE_LIVE_GATE1A09: "1"
+          PYTHONUNBUFFERED: "1"
+        run: |
+          mkdir -p artifacts
+          set -o pipefail
+          python src/gate1a09_exact_public_search.py 2>&1 | tee artifacts/connection-console.log
+      - name: Save sanitized JSON on success or failure
+        if: always()
+        run: |
+          mkdir -p artifacts
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          p=Path("artifacts/connection-console.log")
+          s=p.read_text(encoding="utf-8",errors="replace") if p.exists() else ""
+          a,b="BEGIN_GATE1A09_JSON","END_GATE1A09_JSON"
+          if a in s and b in s.split(a,1)[1]:
+              try:
+                  data=json.loads(s.split(a,1)[1].split(b,1)[0].strip())
+              except (ValueError,IndexError):
+                  data={"schema":"gate1a09-wrapper/1","status":"INVALID_JSON"}
+          else:
+              data={"schema":"gate1a09-wrapper/1","status":"PROBE_JSON_NOT_EMITTED"}
+          Path("artifacts/gate1a09-official-link-report.json").write_text(
+              json.dumps(data,ensure_ascii=False,indent=2)+"\n",encoding="utf-8")
+          PY
+      - name: Upload sanitized status
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: gate1a09-exact-official-form-evidence
+          path: artifacts/gate1a09-official-link-report.json
+          retention-days: 3
+          if-no-files-found: error
