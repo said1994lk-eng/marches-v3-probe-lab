@@ -74,7 +74,8 @@ def blank_report() -> dict:
         "status": "LIVE_DISABLED",
         "mode": "PUBLIC_READONLY_NO_FILTER_NO_DCE_NO_DB",
         "home_navigation": None,
-        "menu": {"opened": False, "consultations_clicked": False, "error": None},
+        "menu": {"opened": False, "consultations_clicked": False, "error": None,
+                 "destination_after_click": None},
         "direct_fallback": None,
         "search_form": {"form_ready": False, "source": None, "reason": None},
         "navigation_responses": [],
@@ -157,6 +158,7 @@ async def open_home_menu(page: Any, output: dict) -> tuple[bool, bool]:
         output["menu"]["consultations_clicked"] = True
     except Exception as exc:
         output["menu"]["error"] = "CONSULTATIONS_CLICK_" + failure_reason(exc)
+        output["menu"]["destination_after_click"] = classify_destination(getattr(page, "url", ""))
         # A navigation might have occurred even if the click timed out. Check
         # the current trusted page once without a repeated click.
         if classify_destination(getattr(page, "url", "")) == "OFFICIAL_ADVANCED_SEARCH_ROUTE":
@@ -165,7 +167,8 @@ async def open_home_menu(page: Any, output: dict) -> tuple[bool, bool]:
             return ready, False if ready else True
         return False, True
 
-    if classify_destination(getattr(page, "url", "")) in BLOCKING_CLASSES:
+    output["menu"]["destination_after_click"] = classify_destination(getattr(page, "url", ""))
+    if output["menu"]["destination_after_click"] in BLOCKING_CLASSES:
         output["status"] = "UNAPPROVED_MENU_DESTINATION"
         return False, False
     ready, reason = await look_for_form(page)
