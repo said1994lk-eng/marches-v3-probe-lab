@@ -1,0 +1,24 @@
+name: "57 - Verified Public Search Link Integration (offline only)"
+on:
+  push:
+    paths:
+      - ".github/workflows/57-gate1a09-integration-offline.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  regression:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 4
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Ensure Gate 1A/1B all share verified exact public route
+        run: |
+          python -m py_compile src/gate1a09_exact_public_search.py src/gate1b_probe.py src/gate1b02_probe.py
+          python -m unittest discover -s tests -q
