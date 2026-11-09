@@ -110,6 +110,14 @@ class TestPolicy(unittest.TestCase):
         self.assertTrue(official_public_url("https://www.marchespublics.gov.ma/styles/main.css"))
         self.assertFalse(official_public_url("https://external.example/styles/main.css"))
 
+    def test_first_party_prado_intermediate_resource_allowed(self):
+        url="https://www.marchespublics.gov.ma/index.php?page=entreprise.EntrepriseResultSearch"
+        # Transport is first-party only; an unexpected landing is checked
+        # independently by classify_destination rather than preemptively
+        # killing its request at the network layer.
+        self.assertTrue(official_public_url(url))
+        self.assertFalse(official_public_url(url,navigation=True))
+
     def test_blank_report_does_not_claim_filter_or_storage(self):
         d=blank_report()
         self.assertFalse(d["category_confirmed"])
