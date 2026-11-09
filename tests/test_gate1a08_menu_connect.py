@@ -9,7 +9,7 @@ sys.path.insert(0,str(Path(__file__).resolve().parents[1]/"src"))
 from gate1a08_menu_connect import (
     ADVANCED, HOME, CATEGORY_DOM_JS, HOME_READY_JS, SAFE_DOM_JS, blank_report, failure_reason,
     official_public_url, look_for_form, open_home_menu, run,
-    run_with_page, trusted_advanced_link, trusted_public_menu_link,
+    run_with_page, trusted_advanced_link, trusted_public_menu_link, public_menu_route_id,
 )
 
 
@@ -166,6 +166,13 @@ class TestPolicy(unittest.TestCase):
         uri="https://www.marchespublics.gov.ma/index.php?page=entreprise.EntrepriseConsultationsEnCours&AllCons"
         self.assertEqual(trusted_public_menu_link(uri,HOME),uri)
 
+    def test_only_route_name_exposed_not_query_tokens(self):
+        raw="https://www.marchespublics.gov.ma/index.php?page=entreprise.EntrepriseConsultationsEnCours&token=private"
+        result=public_menu_route_id(raw,HOME)
+        self.assertEqual(result,"entreprise.EntrepriseConsultationsEnCours")
+        self.assertNotIn("private",result)
+        self.assertIsNone(public_menu_route_id("https://external.example/?page=entreprise.FooBar",HOME))
+
     def test_protected_public_menu_link_does_not_open(self):
         root="https://www.marchespublics.gov.ma/index.php?page="
         for tail in ["entreprise.EntrepriseDetailsConsultation&refConsultation=7",
@@ -232,6 +239,7 @@ class TestMenu(unittest.TestCase):
         self.assertEqual(result["status"],"FORM_READY_CONFIRMED_ONCE",result)
         self.assertTrue(result["menu"]["consultations_opened_via_link"])
         self.assertEqual(result["menu"]["link_class"],"OFFICIAL_OTHER_PUBLIC_SEARCH_HREF")
+        self.assertEqual(result["menu"]["link_route_id"],"entreprise.EntrepriseConsultationsEnCours")
         self.assertEqual(result["direct_get_attempts"],0)
         self.assertEqual(len(p.goto_calls),2)
         self.assertEqual(p.clicks,["menu"])
