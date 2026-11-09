@@ -11,6 +11,8 @@ from gate1a09_exact_public_search import (
 )
 from navigation_recovery import is_allowed_search_url
 from navigation_destination import classify_destination
+from gate1b_probe import ROUTES as GATE1B_ROUTES
+from gate1b02_probe import ROUTES as GATE1B02_ROUTES
 
 
 class ExactLinkTests(unittest.TestCase):
@@ -32,6 +34,11 @@ class ExactLinkTests(unittest.TestCase):
         self.assertEqual({r.id for r in ROUTES},
                          {"official_menu_exact","legacy_secondary"})
         self.assertEqual([r.url for r in ROUTES],[PUBLIC_MENU_URL,SECONDARY])
+
+    def test_both_filter_probes_use_verified_menu_link(self):
+        self.assertEqual(GATE1B_ROUTES,ROUTES)
+        self.assertEqual(GATE1B02_ROUTES,ROUTES)
+        self.assertEqual(GATE1B02_ROUTES[0].id,"official_menu_exact")
 
     def test_no_portal_scan_claim(self):
         result=blank_report()
