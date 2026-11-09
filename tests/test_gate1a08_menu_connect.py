@@ -29,6 +29,15 @@ class Clicker:
         assert name=="href"
         return self.page.consultations_href
 
+    async def evaluate(self, expression):
+        assert expression == "(element) => element.click()"
+        self.page.clicks.append(self.kind)
+        if self.kind=="consultations":
+            self.page.url=ADVANCED
+            self.page.form_ready=True
+        if self.kind==self.page.fail_at:
+            raise TimeoutError("private URL or token should not reach logs")
+
     async def click(self,*,timeout):
         self.page.clicks.append(self.kind)
         if self.kind=="consultations":
