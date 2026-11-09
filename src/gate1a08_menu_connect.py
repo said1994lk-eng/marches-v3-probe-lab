@@ -192,7 +192,10 @@ async def open_home_menu(page: Any, output: dict) -> tuple[bool, bool]:
                 return False, False
         elif not raw_href or raw_href.lstrip().lower().startswith(("javascript:", "#")):
             output["menu"]["link_class"] = "DYNAMIC_MENU_LINK"
-            await consultations.click(timeout=23000)
+            # Trigger the public anchor's DOM click handler without waiting for
+            # full page 'load'. Readiness is verified in look_for_form below.
+            # This is one click, not a retry or an auth/CAPTCHA workaround.
+            await consultations.evaluate("(element) => element.click()")
             output["menu"]["consultations_clicked"] = True
         else:
             output["menu"]["link_class"] = "UNAPPROVED_MENU_HREF"
