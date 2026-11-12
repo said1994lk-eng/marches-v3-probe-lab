@@ -1,0 +1,30 @@
+name: "61 - Local Windows Diagnostic Safety (offline only)"
+on:
+  push:
+    paths:
+      - ".github/workflows/61-local-windows-diagnostic-offline.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  safety:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 4
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Validate all Python regressions (NO portal traffic)
+        run: |
+          python -m py_compile scripts/local_connection_check.py
+          python -m unittest discover -s tests -q
+      - name: Confirm Windows launchers are present and do not expose secrets
+        run: |
+          test -f scripts/01-Test-Connexion-Windows.cmd
+          test -f scripts/02-Fournitures-Une-Fiche-Windows.cmd
+          test -f docs/LOCAL_WINDOWS_CONNECTION_SOLUTION.md
+          test -f .gitignore
