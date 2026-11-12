@@ -1,0 +1,6 @@
+# Local execution: never publish browser state, Python environments or reports
+.venv/
+local-reports/
+__pycache__/
+*.pyc
+.pytest_cache/
